@@ -1,0 +1,110 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "SDLC validate",
+      "type": "process",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile", "-File", "${workspaceFolder}\\tools\\Invoke-SDLC-Eval.ps1",
+        "-ScenarioFile", "${input:scenarioFile}", "-Stage", "${input:stage}",
+        "-Mode", "ValidateOnly", "-TargetModels", "${input:targetModels}"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "SDLC run (uses model credits)",
+      "type": "process",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile", "-File", "${workspaceFolder}\\tools\\Invoke-SDLC-Eval.ps1",
+        "-ScenarioFile", "${input:scenarioFile}", "-Stage", "${input:stage}",
+        "-Mode", "Run", "-TargetModels", "${input:targetModels}"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "group": "test",
+      "runOptions": { "instanceLimit": 1 }
+    },
+    {
+      "label": "SDLC Test validate",
+      "type": "process",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile", "-File", "${workspaceFolder}\\tools\\Invoke-SDLC-Eval.ps1",
+        "-ScenarioFile", "${input:scenarioFile}", "-Stage", "test",
+        "-DevRunDirectory", "${input:devRunDirectory}", "-Mode", "ValidateOnly",
+        "-TestModels", "${input:testModels}"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "SDLC Test run (uses model credits)",
+      "type": "process",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile", "-File", "${workspaceFolder}\\tools\\Invoke-SDLC-Eval.ps1",
+        "-ScenarioFile", "${input:scenarioFile}", "-Stage", "test",
+        "-DevRunDirectory", "${input:devRunDirectory}", "-Mode", "Run",
+        "-TestModels", "${input:testModels}"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "group": "test",
+      "runOptions": { "instanceLimit": 1 }
+    },
+    {
+      "label": "SDLC offline scenario regression",
+      "type": "process",
+      "command": "pwsh",
+      "args": ["-NoProfile", "-File", "${workspaceFolder}\\tests\\Test-DesignScenario.ps1"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "SDLC offline Test regression",
+      "type": "process",
+      "command": "pwsh",
+      "args": ["-NoProfile", "-File", "${workspaceFolder}\\tests\\Test-TestRun.ps1"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "group": "test"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "scenarioFile",
+      "type": "promptString",
+      "description": "External scenario JSON path (absolute recommended)"
+    },
+    {
+      "id": "stage",
+      "type": "pickString",
+      "description": "Stage (Test uses the separate SDLC Test tasks)",
+      "options": ["req", "design", "dev"],
+      "default": "req"
+    },
+    {
+      "id": "targetModels",
+      "type": "promptString",
+      "description": "Target models, comma-separated",
+      "default": "gpt-6-luna"
+    },
+    {
+      "id": "devRunDirectory",
+      "type": "promptString",
+      "description": "Existing Dev comparison root containing input-manifest.json"
+    },
+    {
+      "id": "testModels",
+      "type": "promptString",
+      "description": "Test models, comma-separated",
+      "default": "gpt-6.1-sol"
+    }
+  ]
+}

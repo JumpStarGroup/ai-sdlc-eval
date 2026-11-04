@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Knowledge-bound participant knowledge v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "version", "initialRequest", "sources", "facts", "ruleSets", "unknowns"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "id": {"$ref": "#/$defs/text"},
+    "version": {"$ref": "#/$defs/text"},
+    "initialRequest": {"$ref": "#/$defs/text"},
+    "sources": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/source"}},
+    "facts": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/fact"}},
+    "ruleSets": {"type": "array", "items": {"$ref": "#/$defs/ruleSet"}},
+    "unknowns": {"type": "array", "items": {"$ref": "#/$defs/unknown"}}
+  },
+  "$defs": {
+    "text": {"type": "string", "minLength": 1},
+    "texts": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/text"}},
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "path", "version", "sha256"],
+      "properties": {
+        "id": {"$ref": "#/$defs/text"}, "path": {"$ref": "#/$defs/text"},
+        "version": {"$ref": "#/$defs/text"}, "sha256": {"type": "string", "pattern": "^[A-F0-9]{64}$"}
+      }
+    },
+    "reference": {
+      "type": "object", "additionalProperties": false, "required": ["sourceId", "answerId"],
+      "properties": {"sourceId": {"$ref": "#/$defs/text"}, "answerId": {"$ref": "#/$defs/text"}}
+    },
+    "fact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "topic", "intent", "answer", "questions", "exclude", "sources"],
+      "properties": {
+        "id": {"$ref": "#/$defs/text"}, "topic": {"$ref": "#/$defs/text"},
+        "intent": {"$ref": "#/$defs/text"}, "answer": {"$ref": "#/$defs/text"},
+        "questions": {"allOf": [{"$ref": "#/$defs/texts"}, {"minItems": 1}]},
+        "exclude": {"$ref": "#/$defs/texts"},
+        "sources": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/reference"}}
+      }
+    },
+    "ruleSet": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "intent", "factIds", "questions", "exclude"],
+      "properties": {
+        "id": {"$ref": "#/$defs/text"}, "intent": {"$ref": "#/$defs/text"},
+        "factIds": {"allOf": [{"$ref": "#/$defs/texts"}, {"minItems": 1}]},
+        "questions": {"$ref": "#/$defs/texts"}, "exclude": {"$ref": "#/$defs/texts"}
+      }
+    },
+    "unknown": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "intent", "questions", "reason", "evidence"],
+      "properties": {
+        "id": {"$ref": "#/$defs/text"}, "intent": {"$ref": "#/$defs/text"},
+        "questions": {"$ref": "#/$defs/texts"}, "reason": {"$ref": "#/$defs/text"},
+        "evidence": {"$ref": "#/$defs/text"},
+        "category": {"enum": ["business_decision", "baseline_investigation", "technical_followup", "unclassified"]}
+      }
+    }
+  }
+}

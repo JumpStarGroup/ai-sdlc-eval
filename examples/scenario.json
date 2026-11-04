@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "caseId": "sample",
+  "projectProfile": "project.json",
+  "stages": {
+    "req": {
+      "inputFile": "knowledge.md",
+      "rubricFile": "rubric.json"
+    }
+  }
+}

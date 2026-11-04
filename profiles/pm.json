@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "requirements-clarification",
+  "version": "2",
+  "targetRole": "PM",
+  "artifactName": "需求文档",
+  "assessmentCriteria": [
+    { "id": "question_discovery", "question": "能否自主发现需要澄清的问题，并区分自主发现与模拟人引导？" },
+    { "id": "scope_and_assumptions", "question": "能否区分已确认范围、假设和未决项，不擅自排除尚未讨论的需求？" },
+    { "id": "traceable_requirements", "question": "需求及验收条件是否可追溯到对话证据，是否保留待确认事项？" }
+  ],
+  "readinessQuestion": "现在是否需求明确，可以产生需求文档了？",
+  "localNotice": "【本地测试约定】本次仅在本机进行需求澄清与草稿验证，暂不使用任何 MCP，也不执行 GitHub Issue/PR 搜索、登记或远程操作。本地文档交付替代本次 Issue/PR 发布流程；Issue 查重、登记和关联另列远程跟踪待办，不作为继续澄清或生成草稿的前置条件。范围经确认后，简单和复杂需求都必须在当前工作区实际生成 docs/requirements/req-<slug>.md，不因缺少 Issue/MCP 而停止，不虚构远程结果。业务待决只保留经调查仍需业务选择的具体问题或明确保留的人工决策；基线调查、设计跟进和远程待办分类记录，不因模板空白笼统新增待确认事项。成功交付并完成核对后输出“需求分析已经完成！”，同时说明文档路径、草稿状态及阻塞事项；口头就绪不能代替文件交付，待决未清不等于全部明确。本约定不授权业务规则变更、功能实现、验收或发布。"
+}

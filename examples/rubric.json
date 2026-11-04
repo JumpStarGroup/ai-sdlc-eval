@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "synthetic-list",
+  "version": "1",
+  "scale": { "min": 0, "max": 4 },
+  "criteria": [
+    {
+      "id": "list_scope",
+      "title": "Synthetic list scope",
+      "weight": 100,
+      "description": "Check alphabetical item names, the empty-state message, read-only scope and explicit unresolved pagination/filtering. Do not treat this fixture as approval for a real product."
+    }
+  ]
+}

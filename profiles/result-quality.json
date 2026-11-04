@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "id": "general-result-quality",
+  "version": "2",
+  "scale": { "min": 0, "max": 4 },
+  "criteria": [
+    {
+      "id": "evidence_fidelity",
+      "title": "Evidence fidelity",
+      "weight": 20,
+      "description": "Claims in the deliverable match the recorded dialogue and cited baseline; assumptions and proposals are not presented as approved facts."
+    },
+    {
+      "id": "confirmed_scope_coverage",
+      "title": "Confirmed scope coverage",
+      "weight": 20,
+      "description": "Material decisions and requirements actually confirmed in the conversation are represented in the final deliverable with appropriate acceptance criteria."
+    },
+    {
+      "id": "open_decision_integrity",
+      "title": "Open decision integrity",
+      "weight": 20,
+      "description": "Evaluate only actually raised unanswered or partially answered decisions: preserve them without inventing approval or defaults. Properly retaining a business-pending decision is not a defect. Unasked domain checkpoints belong to domain discovery/coverage scoring, not this dimension; confirmed answers omitted from the deliverable belong to confirmed_scope_coverage."
+    },
+    {
+      "id": "artifact_testability",
+      "title": "Artifact quality and testability",
+      "weight": 20,
+      "description": "The verified artifact is coherent, readable, traceable, and expresses requirements in a form that can guide validation without inventing implementation details."
+    },
+    {
+      "id": "completion_and_delivery",
+      "title": "Task completion and actual delivery",
+      "weight": 20,
+      "description": "Score actual delivery against the task contract, not honesty alone. For a task requiring an artifact: 0 = no required artifact delivered; 1 = artifact exists but mandatory delivery checks fail; 2 = usable partial delivery with substantial required work missing; 3 = required delivery verified with minor residual delivery defects; 4 = required delivery verified with no delivery defects. An honest non-completion report does not earn completion points. Authorized pending drafts can earn full delivery points while business decisions remain open. Explain whether non-delivery resulted from agent behavior, controller interruption, infrastructure, or unknown cause; do not turn that attribution into free completion credit. Unsupported completion claims are an additional evidence_fidelity defect. For non-artifact tasks, apply the supplied task's explicit delivery contract instead of requiring a file."
+    }
+  ]
+}

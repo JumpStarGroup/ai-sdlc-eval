@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "implementation-planning",
+  "version": "1",
+  "targetRole": "Plan",
+  "artifactName": "实施计划文档",
+  "assessmentCriteria": [
+    { "id": "input_readiness", "question": "能否识别计划输入缺口，区分已批准需求、约束和假设？" },
+    { "id": "task_dependencies", "question": "任务拆解、依赖和执行顺序是否明确，是否可追溯到已批准输入？" },
+    { "id": "risk_and_verification", "question": "是否识别风险、验证步骤和需人工决定的事项，而不擅自实现或改变需求？" }
+  ],
+  "readinessQuestion": "现在是否已有足够信息，可以产生实施计划文档了？",
+  "localNotice": "【本地测试约定】本次仅在本机澄清计划输入并编制实施计划，暂不使用任何 MCP，也不执行 GitHub Issue/PR 搜索、登记或远程操作。远程登记不作为继续讨论或生成本地计划草稿的前置条件。请依据已确认输入在当前工作区生成实施计划，明确未决项，不虚构批准、Issue 编号或执行结果。本约定不授权变更业务需求、功能实现、验收或发布。"
+}

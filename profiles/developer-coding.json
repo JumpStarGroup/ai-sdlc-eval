@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "developer-coding-local",
+  "version": "5",
+  "stage": "dev",
+  "executionMode": "single-shot-dev",
+  "targetAgent": "SDLCRole_Dev",
+  "initialRequestTemplate": "依据已确认需求 {requirementPath} 和架构设计 {designPath}，在当前独立产品工作区完成所有前后端代码及 Python/API 测试。先核对实际输入和批准来源，在项目指定的 Dev 更新清单中维护简短实施清单，无需独立 Planner。新增或更新新需求的正常、异常和边界测试，维护受影响旧测试的 fixture、输入及断言；未改变的需求必须保留原断言，不得通过删用例、跳过或放宽断言掩盖缺陷。沿用已有功能标签，提出核心回归集纳入或移除建议交 Test 审核；核心回归是选定子集，不等于所有测试，不创建永久 new 标签。后端测试的编写和修复由 Dev 负责，不能推给 Test。维护并运行受影响前端单元测试，按改动执行必要构建、类型或静态检查；不能以 Test 后续执行 Web 为由省略开发验证。执行最新后端测试，在 Dev 更新清单中记录实际命令、退出码、结果、覆盖范围、逐文件变更原因、核心候选及剩余风险。框架独立门禁仍是最新后端测试，旧冻结测试仅作历史对照；前端自测证据单独报告，不冒充框架独立验收。不要执行 Web UI、Playwright 或其他浏览器/E2E 测试，不要启动常驻开发服务器。不执行 GitHub Issue/PR 查询或提交、不检查远程标签、不切换分支、不执行 git commit/push。禁止修改确认需求、设计、项目契约/指导文件及 .github/agents 下的文件。无需聊天协议或特殊结束标记；完成后报告交付和自测证据并退出。若必要输入或验证条件缺失，明确报告阻塞，不伪造批准或通过。",
+  "availableTools": ["view", "glob", "grep", "apply_patch", "create", "edit", "shell"],
+  "allowTools": ["write", "shell"],
+  "denyTools": [],
+  "policy": {
+    "callLimit": 1,
+    "disableBuiltinMcps": true,
+    "timeoutSeconds": 3600
+  }
+}

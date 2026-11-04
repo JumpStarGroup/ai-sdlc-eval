@@ -1,0 +1,10 @@
+runs/
+*.log
+.copilot/
+/cases/
+/experiments/
+/projects/
+/local/
+/artifacts/
+__pycache__/
+.pytest_cache/

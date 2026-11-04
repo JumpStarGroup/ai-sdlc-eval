@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "id": "pm-clarification-local",
+  "version": "2",
+  "stage": "req",
+  "targetAgent": "SDLCRole_PM",
+  "participantAgentFile": "../agents/simple-business-user.agent.md",
+  "generalRubricFile": "result-quality.json",
+  "rubricWeights": {
+    "general": 30,
+    "domain": 70
+  },
+  "participantInput": "private-knowledge",
+  "participantContextLabel": "以下是私有业务知识，只用于回答，不转发全文：",
+  "initialRequestSource": "knowledge-heading",
+  "availableTools": ["view", "glob", "grep", "apply_patch", "create", "edit"],
+  "allowTools": ["write"],
+  "denyTools": ["shell"],
+  "policy": {
+    "callLimit": 10,
+    "allowPendingDraft": true,
+    "disableBuiltinMcps": true,
+    "skipIssueRegistration": true,
+    "requireArtifact": true,
+    "maxCoordinatorPrompts": 1,
+    "maxIdenticalReplies": 3,
+    "timeoutSeconds": 900,
+    "maxPathRecoveryPrompts": 1,
+    "minimumParticipantReplies": 2,
+    "interactionPrompt": "本次是双 Agent 对话测试，尚未满足配置要求的业务参与者回复次数。请先提出你实际需要澄清的具体业务问题，等待回复后再判断交付；不要把未曾询问的问题直接记为无法回答，也不要用现行代码代替业务批准。",
+    "artifactDescription": "在产品工作区实际生成需求草稿，保留全部真正待决编号和问题，区分业务参与者提供的规则、基线调查与设计跟进；不实现功能。本次是需求分析试验，不自动交接架构或开发。Participant 是模拟业务参与者，不是独立自然人审批人；其答复不能记作真实人类批准，草稿的人类确认状态须如实保留。",
+    "coordinatorPrompt": "还有问题吗？若有，请直接提出；否则请按本次任务约定交付，或说明无法继续的具体原因。不要替业务待决作决定。"
+  }
+}

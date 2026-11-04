@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "sample-product",
+  "repositoryPath": "../../sample-product",
+  "runsRoot": "../../sample-eval-runs",
+  "requirementWorkspacePath": "docs/requirements/req-{caseId}.md",
+  "designWorkspacePath": "docs/design/design-{caseId}.md",
+  "reportWorkspacePath": "reports/test-{caseId}.md",
+  "runtimeDirectories": [],
+  "excludePatterns": [".env", ".env.*", "*/.env", "*/.env.*", ".vscode/mcp.json", ".github/mcp.json", "*.simple-knowledge.md"]
+}

@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "backend-testing-local",
+  "version": "3",
+  "stage": "test",
+  "targetAgent": "SDLCRole_Test",
+  "agentSource": "project",
+  "agentFile": ".github/agents/SDLCRole_Test.agent.md",
+  "backendTestAccess": "read-only",
+  "timeoutSeconds": 3600,
+  "webTesting": "not_implemented",
+  "executionMode": "single-shot-test"
+}

@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "id": "architect-design-local",
+  "version": "2",
+  "stage": "design",
+  "targetAgent": "SDLCRole_Architect",
+  "participantAgentFile": "../agents/simple-business-user.agent.md",
+  "generalRubricFile": "result-quality.json",
+  "rubricWeights": {
+    "general": 30,
+    "domain": 70
+  },
+  "participantInput": "confirmed-requirement",
+  "participantContextLabel": "以下是与被测设计师相同版本的已确认需求，只依据它按需回答业务问题，不主动补漏、不审批设计；技术方案和代码调查由设计师负责：",
+  "initialRequestTemplate": "请依据已确认需求 {requirementPath}，调查当前项目基线并完成架构设计，生成 {artifactPath}。本次采用本地设计试验模式：不执行Issue/PR、远程审批验证、提交推送和正式交接，这些手续不作为本地设计前置，不伪造审批或授权。项目设计与开发规范由项目指令发现机制和仓库调查获得，不以场景提示替代。只交付设计，不改确认需求、Agent、代码或测试，不批准实施或发布。只有真实业务歧义才向Participant提问，技术方案由设计师调查、提出依据和取舍。",
+  "availableTools": ["view", "glob", "grep", "apply_patch", "create", "edit"],
+  "allowTools": ["write"],
+  "denyTools": ["shell"],
+  "policy": {
+    "callLimit": 10,
+    "allowPendingDraft": true,
+    "disableBuiltinMcps": true,
+    "skipIssueRegistration": true,
+    "requireArtifact": true,
+    "maxCoordinatorPrompts": 1,
+    "maxIdenticalReplies": 3,
+    "timeoutSeconds": 900,
+    "maxPathRecoveryPrompts": 1,
+    "minimumParticipantReplies": 0,
+    "interactionPrompt": "本地设计不要求参与者回复次数，只对真实业务问题按需澄清。",
+    "artifactDescription": "实际生成 {artifactPath}。只修改本轮设计文档，保留真实未决，明确是待评审设计，不代表实施或发布获批。设计内容按需求和项目角色及规范确定，不由业务场景配置重复规定。",
+    "coordinatorPrompt": "请继续调查并交付实际设计文档；没有真实业务歧义就直接设计，有歧义按需澄清，不为凑交互制造问题。"
+  }
+}

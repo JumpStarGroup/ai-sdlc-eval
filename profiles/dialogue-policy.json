@@ -1,0 +1,15 @@
+{
+  "callLimit": 10,
+  "allowPendingDraft": true,
+  "disableBuiltinMcps": true,
+  "skipIssueRegistration": true,
+  "requireArtifact": true,
+  "maxCoordinatorPrompts": 1,
+  "maxIdenticalReplies": 3,
+  "timeoutSeconds": 900,
+  "maxPathRecoveryPrompts": 1,
+  "minimumParticipantReplies": 2,
+  "interactionPrompt": "本次是双 Agent 对话测试，尚未满足配置要求的业务参与者回复次数。请先提出你实际需要澄清的具体业务问题，等待回复后再判断交付；不要把未曾询问的问题直接记为无法回答，也不要用现行代码代替业务批准。",
+  "artifactDescription": "在产品工作区实际生成需求草稿，保留全部待决编号和原问题；不实现功能。",
+  "coordinatorPrompt": "还有问题吗？若有，请直接提出；否则请按本次任务约定交付，或说明无法继续的具体原因。不要替业务待决作决定。"
+}
