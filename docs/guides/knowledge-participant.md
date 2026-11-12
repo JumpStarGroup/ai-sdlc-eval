@@ -1,8 +1,11 @@
-# 结构化知识参与者
+# 历史工具：结构化知识参与者
 
-这是独立维护工具，不是四阶段主线的必需依赖。
-[知识 Schema](../../profiles/knowledge.schema.json) 为通用框架资产；
-知识、批准来源、校准样本是外部业务资产。
+这是保留兼容的独立维护工具，不属于当前 `req/design/dev/test` 主线。
+[知识 Schema](../../profiles/legacy/knowledge.schema.json) 已归入 `legacy`，仅作旧结构化格式参考；
+当前运行代码不加载这个文件，旧工具的 JSON 校验由
+[KnowledgeParticipant.psm1](../../tools/KnowledgeParticipant.psm1) 实现。
+当前 Req 使用外部 Markdown 知识，Design 使用确认需求，不要求准备此 Schema 或旧结构化知识。
+知识、批准来源、校准样本仍是外部业务资产。
 
 新聊天必须显式指定知识，恢复聊天使用已有会话中冻结的配置：
 

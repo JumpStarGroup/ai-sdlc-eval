@@ -7,6 +7,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 Import-Module (Join-Path $PSScriptRoot 'DialoguePolicy.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'EvaluationConfig.psm1')
 $configPath = (Resolve-Path -LiteralPath $ConfigFile).Path
 $configRoot = Split-Path $configPath
 $config = Get-Content $configPath -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
@@ -32,7 +33,7 @@ foreach ($key in @('repositoryPath', 'runDirectory', 'targetAgent', 'targetModel
     if ($config[$key] -isnot [string] -or [string]::IsNullOrWhiteSpace($config[$key])) { throw "Missing configuration: $key" }
 }
 if ($config.targetAgent -cnotmatch '^[\w-]+$' -or $config.participantModel -imatch '^(auto(?::.*)?|fusion(?::.*)?|hydrafusion(?:-max)?)$') { throw 'Use an explicit Agent and participant model; only targetModel may use Auto/Fusion.' }
-$policy = Get-Content (Join-Path $PSScriptRoot '..\profiles\dialogue-policy.json') -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+$policy = Get-Content (Join-Path $PSScriptRoot '..\profiles\policies\dialogue-policy.json') -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
 if ($config.ContainsKey('policy')) {
     foreach ($key in $config.policy.Keys) {
         if (-not $policy.ContainsKey($key)) { throw "Unknown policy: $key" }
@@ -118,9 +119,10 @@ Copy-Item $configPath (Join-Path $root 'config.json')
 Copy-Item (Join-Path $PSScriptRoot 'Invoke-SdlcCapture.ps1') $root
 Copy-Item (Join-Path $PSScriptRoot 'CapturedProcess.psm1') $root
 Copy-Item (Join-Path $PSScriptRoot 'DialoguePolicy.psm1') $root
+Copy-Item (Join-Path $PSScriptRoot 'EvaluationConfig.psm1') $root
 Copy-Item (Join-Path $PSScriptRoot 'Export-AgentDialogueReport.ps1') $root
 $contract = @{}
-foreach ($file in @('knowledge.md', 'target.agent.md', 'participant.agent.md', 'config.json', 'Invoke-SdlcCapture.ps1', 'CapturedProcess.psm1', 'DialoguePolicy.psm1', 'Export-AgentDialogueReport.ps1')) {
+foreach ($file in @('knowledge.md', 'target.agent.md', 'participant.agent.md', 'config.json', 'Invoke-SdlcCapture.ps1', 'CapturedProcess.psm1', 'DialoguePolicy.psm1', 'EvaluationConfig.psm1', 'Export-AgentDialogueReport.ps1')) {
     $contract[$file] = (Get-FileHash (Join-Path $root $file)).Hash
 }
 $workspace = Join-Path $root 'participant-workspace'
@@ -206,6 +208,10 @@ try {
             CopilotHome = (Join-Path $root "$role-home"); CliPath = $CliPath
             TimeoutSeconds = $policy.timeoutSeconds; Resume = ($roleCalls[$role] -gt 0)
         }
+        $effortKey = $role + 'ReasoningEffort'
+        $turnEffort = if ($config.ContainsKey($effortKey)) { $config[$effortKey] } else { Get-ModelReasoningEffort $parameters.Model }
+        if ($turnEffort) { $parameters.ReasoningEffort = $turnEffort }
+        elseif (-not (Test-RoutedModel $parameters.Model)) { throw 'An explicit model requires a reasoning effort.' }
         if ($role -eq 'participant') {
             $parameters.NoTools = $true; $parameters.DisableBuiltinMcps = $true; $parameters.NoCustomInstructions = $true
         } else {
@@ -213,7 +219,8 @@ try {
             $parameters.DisableBuiltinMcps = $policy.disableBuiltinMcps
             $parameters.RecoverLocalPatchErrors = $true
         }
-        $state.turns += @{ call = $state.calls; role = $role; input = $nextInput; inputSender = $inputSender; startedAt = [DateTimeOffset]::UtcNow.ToString('o'); state = 'dispatching'; evidence = $turnDirectory }
+        $state.turns += @{ call = $state.calls; role = $role; requestedReasoningEffort = $turnEffort
+            input = $nextInput; inputSender = $inputSender; startedAt = [DateTimeOffset]::UtcNow.ToString('o'); state = 'dispatching'; evidence = $turnDirectory }
         Save-Dialogue
         & (Join-Path $root 'Invoke-SdlcCapture.ps1') @parameters | Out-Host
         $state.turns[-1]['finishedAt'] = [DateTimeOffset]::UtcNow.ToString('o')

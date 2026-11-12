@@ -544,7 +544,7 @@ if ($SimulatorModel -eq 'auto' -or $config.models -contains 'auto') { throw 'Pin
 if ($config.pmAgent -notmatch '^[\w-]+$') { throw 'Invalid PM Agent name.' }
 
 $profileSources = [ordered]@{}
-foreach ($entry in @(@{ key = 'capabilityProfile'; default = 'profiles/pm.json'; snapshot = 'capability-profile.json' },
+foreach ($entry in @(@{ key = 'capabilityProfile'; default = 'profiles/legacy/pm.json'; snapshot = 'capability-profile.json' },
     @{ key = 'domainProfile'; default = ''; snapshot = 'domain-profile.json' })) {
     $path = Join-Path $framework $entry.default
     if ($config.Contains($entry.key)) {

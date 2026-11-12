@@ -1,11 +1,12 @@
 {
   "schemaVersion": 1,
   "id": "architect-design-local",
-  "version": "2",
+  "version": "3",
   "stage": "design",
   "targetAgent": "SDLCRole_Architect",
-  "participantAgentFile": "../agents/simple-business-user.agent.md",
-  "generalRubricFile": "result-quality.json",
+  "targetAgentFile": "../../agents/SDLCRole_Architect.agent.md",
+  "participantAgentFile": "../../agents/simple-business-user.agent.md",
+  "generalRubricFile": "../rubrics/result-quality.json",
   "rubricWeights": {
     "general": 30,
     "domain": 70

@@ -178,6 +178,7 @@ function Copy-DevDeliveryWorkspace([string]$DeliveryDirectory, [hashtable]$Manif
 }
 
 function Read-BackendTestProfile([string]$ProfileFile, [string]$ProjectRepository, [hashtable]$Project = @{}) {
+    Import-Module (Join-Path $PSScriptRoot 'EvaluationConfig.psm1')
     $path = (Resolve-Path -LiteralPath $ProfileFile).Path
     $profile = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -AsHashtable
     if ($profile['stage'] -ne 'test' -or $profile['executionMode'] -ne 'single-shot-test' -or
@@ -192,24 +193,24 @@ function Read-BackendTestProfile([string]$ProfileFile, [string]$ProjectRepositor
         if (-not $ProjectRepository -or -not (Test-Path -LiteralPath $ProjectRepository -PathType Container)) { throw 'Project-sourced Test agent requires a valid Dev sourceRepository.' }
         $base = (Resolve-Path -LiteralPath $ProjectRepository).Path
         Assert-DevRelativePath $profile.agentFile
-        foreach ($key in @('projectContractPath', 'reportWorkspacePath')) {
-            if ($Project.ContainsKey($key)) {
-                if ($Project[$key] -isnot [string] -or [string]::IsNullOrWhiteSpace($Project[$key])) {
-                    throw "Project $key must be a nonempty string."
-                }
-                $profile[$key] = $Project[$key]
+    }
+    foreach ($key in @('projectContractPath', 'reportWorkspacePath')) {
+        if ($Project.ContainsKey($key)) {
+            if ($Project[$key] -isnot [string] -or [string]::IsNullOrWhiteSpace($Project[$key])) {
+                throw "Project $key must be a nonempty string."
             }
-        }
-        if ($access -eq 'read-only' -and -not $profile['reportWorkspacePath']) {
-            throw 'Read-only Test requires project reportWorkspacePath (or an explicit legacy Test profile).'
+            $profile[$key] = $Project[$key]
         }
     }
-    $agent = [IO.Path]::GetFullPath($profile.agentFile, $base)
+    if ($access -eq 'read-only' -and -not $profile['reportWorkspacePath']) {
+        throw 'Read-only Test requires project reportWorkspacePath (or an explicit legacy Test profile).'
+    }
+    $agent = Resolve-EvaluationAgent $profile.agentFile $base $profile.targetAgent
     $contract = $null
     if ($profile['projectContractPath']) {
-        if ($origin -ne 'project') { throw 'A Test project contract requires agentSource=project.' }
+        if (-not $ProjectRepository) { throw 'A Test project contract requires a project repository.' }
         Assert-DevRelativePath $profile.projectContractPath
-        $contract = Join-Path $base $profile.projectContractPath
+        $contract = Join-Path $ProjectRepository $profile.projectContractPath
     }
     foreach ($file in @($agent, $contract) | Where-Object { $_ }) {
         if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing Test role input: $file" }
@@ -219,10 +220,6 @@ function Read-BackendTestProfile([string]$ProfileFile, [string]$ProjectRepositor
             $ancestor = Split-Path $ancestor -Parent
         }
     }
-    $definition = Get-Content -LiteralPath $agent -Raw
-    $frontmatter = [regex]::Match($definition, '\A\uFEFF?---\r?\n(?<metadata>[\s\S]*?)\r?\n---(?:\r?\n|$)')
-    $name = [regex]::Match($frontmatter.Groups['metadata'].Value, '(?m)^name:[ \t]*(?<quote>[''"]?)(?<name>[\w-]+)\k<quote>[ \t]*\r?$')
-    if (-not $name.Success -or $name.Groups['name'].Value -cne $profile.targetAgent) { throw 'Test agent name does not match targetAgent.' }
     if ($profile['reportWorkspacePath']) {
         $report = $profile.reportWorkspacePath.Replace('{caseId}', 'case').Replace('\', '/')
         Assert-DevRelativePath $report

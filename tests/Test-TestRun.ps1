@@ -38,7 +38,7 @@ try {
     Write-Json (Join-Path $source 'comparison.json') $comparison
     $sourceHashes = Get-DeliveryHashes $source
     $env:TEST_RUN_COUNTER = Join-Path $fixture 'calls.txt'
-    $profile = Get-Content (Join-Path $framework 'profiles\backend-testing.json') -Raw | ConvertFrom-Json -AsHashtable
+    $profile = Get-Content (Join-Path $framework 'profiles\stages\backend-testing.json') -Raw | ConvertFrom-Json -AsHashtable
     $profile.targetAgent = 'eval-backend-tester'
     $profile.agentSource = 'profile'
     $profile.backendTestAccess = 'maintain'
@@ -63,10 +63,15 @@ try {
         -DevRunDirectory $source -DevConditions 'dev-one' -TestModels 'fixture-tester' -RunDirectory $planOutput -TestProfileFile $profilePath
     Assert ($unified.stage -eq 'test' -and -not $unified.modelCallsStarted) 'Unified Test entry must route to source delivery without requiring a duplicate stage input.'
     $externalPlan = & (Join-Path $framework 'tools\Invoke-SDLC-Eval.ps1') -ScenarioFile $scenarioPath -Stage test `
-        -DevRunDirectory $source -RunDirectory $planOutput -TestModels fixture-tester
+        -DevRunDirectory $source -RunDirectory $planOutput -TestModels fixture-tester -ReasoningEffort high `
+        -ModelReasoningEfforts '{"fixture-tester":"low"}'
     Assert ($externalPlan.reportWorkspacePath -eq 'reports/backend-{caseId}.md' -and
         $externalPlan.projectContractPath -eq 'docs/PROJECT-WORKFLOW-ROLES-DEV-TEST.md' -and
         -not (Test-Path $planOutput)) 'Project-specific Test paths come from the external project configuration.'
+    Assert ($externalPlan.modelReasoningEfforts['fixture-tester'] -ceq 'low' -and
+        $externalPlan.agentFile -ceq (Join-Path $framework 'agents\SDLCRole_Test.agent.md')) 'Unified Test accepts model overrides and uses the framework role instead of a product role with the same name.'
+    $portableProfile = Read-BackendTestProfile (Join-Path $framework 'profiles\stages\backend-testing.json') '' @{ reportWorkspacePath = 'reports/test.md' }
+    Assert ($portableProfile.agentFile -ceq (Join-Path $framework 'agents\SDLCRole_Test.agent.md')) 'Default Test role resolution requires no product repository or installed project agent.'
     $env:TEST_RUN_FIXTURE = 'state-check'
     $externalRun = Join-Path $fixture 'external-project-test'
     & $runner -DevRunDirectory $source -ProjectFile $projectPath -Mode Run -RunDirectory $externalRun `
@@ -74,6 +79,8 @@ try {
     Assert (Test-Path (Join-Path $externalRun 'dev-one--test-fixture-tester-1\product\reports\backend-fixture.md')) 'Test writes its report at the project-configured path.'
     $effectiveProfile = Get-Content (Join-Path $externalRun 'inputs\profile.json') -Raw | ConvertFrom-Json
     Assert ($effectiveProfile.reportWorkspacePath -eq 'reports/backend-{caseId}.md') 'Effective Test paths are frozen in runtime evidence.'
+    Assert ((Get-FileHash (Join-Path $externalRun 'inputs\tester.agent.md')).Hash -ceq
+        (Get-FileHash (Join-Path $framework 'agents\SDLCRole_Test.agent.md')).Hash) 'Default Test freezes the framework agent even when the product has a conflicting definition.'
     foreach ($mode in @('state-check', 'maintain', 'product-tamper', 'dependency-tamper', 'tests-fail', 'missing-review', 'review-gap', 'corrupt', 'exit-failure', 'timeout')) {
         $env:TEST_RUN_FIXTURE = $mode
         $profile.timeoutSeconds = if ($mode -eq 'timeout') { 2 } else { 10 }
@@ -81,7 +88,8 @@ try {
         $output = Join-Path $fixture $mode
         $models = @(if ($mode -eq 'state-check') { 'fusion:standard'; 'fusion:high' } else { 'fixture-tester' })
         $errorText = $null
-        try { & $runner -DevRunDirectory $source -RunDirectory $output -Mode Run -TestModels $models -CliPath $cli -ProfileFile $profilePath | Out-Null }
+        try { & $runner -DevRunDirectory $source -RunDirectory $output -Mode Run -TestModels $models -CliPath $cli -ProfileFile $profilePath `
+            -ModelReasoningEfforts '{"fusion:high":"high"}' | Out-Null }
         catch { $errorText = $_.Exception.Message }
         $index = Get-Content (Join-Path $output 'comparison.json') -Raw | ConvertFrom-Json -AsHashtable
         $expected = switch ($mode) {
@@ -96,6 +104,9 @@ try {
             $result = Get-Content (Join-Path $item.runDirectory 'result.json') -Raw | ConvertFrom-Json -AsHashtable
             Assert ($result.outcome -eq $expected -and $result.calls -eq 1 -and $result.integrityVerified) "$mode incorrect outcome: $($result.outcome) / $($result.errors -join '; ')"
             Assert ($result.devOutcome -eq 'tests_failed') 'Test may analyze failed Dev tests without rewriting the original outcome.'
+            $expectedEffort = if ($item.model -eq 'fusion:high') { 'high' } elseif ($item.model -eq 'fusion:standard') { $null } else { 'medium' }
+            $meta = Get-Content (Join-Path $result.capture.turnDirectory 'turn.json') -Raw | ConvertFrom-Json -AsHashtable
+            Assert ($item.requestedReasoningEffort -ceq $expectedEffort -and $meta.reasoningEffort -ceq $expectedEffort) 'Independent Test must capture each model effort with medium fallback.'
             if ($mode -eq 'maintain') {
                 Assert ($result.beforeVerification.checks[0].total -eq 1 -and $result.verification.checks[0].total -eq 2 -and
                     $result.review.testChanges.Count -eq 1) 'Independent before/after counts and reasons must reflect actual latest tests.'
@@ -105,7 +116,9 @@ try {
         Assert-DeliveryHashes $sourceHashes (Get-DeliveryHashes $source)
         Write-Host "PASS: Test $mode"
     }
-    $readOnlyProfile = Get-Content (Join-Path $framework 'profiles\backend-testing.json') -Raw | ConvertFrom-Json -AsHashtable
+    $readOnlyProfile = Get-Content (Join-Path $framework 'profiles\stages\backend-testing.json') -Raw | ConvertFrom-Json -AsHashtable
+    $readOnlyProfile.agentSource = 'project'
+    $readOnlyProfile.agentFile = '.github/agents/SDLCRole_Test.agent.md'
     $readOnlyProfile.projectContractPath = 'docs/PROJECT-WORKFLOW-ROLES-DEV-TEST.md'
     $readOnlyProfile.reportWorkspacePath = 'docs/Test/test-report-{caseId}.md'
     $readOnlyProfile.timeoutSeconds = 10
@@ -139,7 +152,8 @@ try {
         @{ backendTestAccess = 'maintain' },
         @{ reportWorkspacePath = 'tests/new_test.py' }
     )) {
-        $candidate = Get-Content (Join-Path $framework 'profiles\backend-testing.json') -Raw | ConvertFrom-Json -AsHashtable
+        $candidate = Get-Content (Join-Path $framework 'profiles\stages\backend-testing.json') -Raw | ConvertFrom-Json -AsHashtable
+        $candidate.agentFile = Join-Path $framework 'agents\SDLCRole_Test.agent.md'
         $candidate.reportWorkspacePath = 'reports/test-{caseId}.md'
         foreach ($key in $invalid.Keys) { $candidate[$key] = $invalid[$key] }
         Write-Json $readOnlyPath $candidate
@@ -156,7 +170,7 @@ try {
         @{ reportWorkspacePath = 'reports/test.md'; projectContractPath = '../outside.md' }
     )) {
         $rejected = $false
-        try { Read-BackendTestProfile (Join-Path $framework 'profiles\backend-testing.json') $workspace $invalidProject | Out-Null }
+        try { Read-BackendTestProfile (Join-Path $framework 'profiles\stages\backend-testing.json') $workspace $invalidProject | Out-Null }
         catch { $rejected = $true }
         Assert $rejected 'Missing or invalid project Test paths must fail before execution.'
     }

@@ -7,7 +7,7 @@ param(
     [ValidatePattern('^[\w-]+$')][string]$Agent = 'pilotRole_Product_Manager',
     [string]$Model,
     [string]$AutoTier,
-    [string]$ReasoningEffort,
+    [ValidateSet('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')][string]$ReasoningEffort = 'medium',
     [string[]]$AvailableTool = @(),
     [switch]$NoTools,
     [switch]$DisableBuiltinMcps,
@@ -29,6 +29,9 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:enableFusionFeatureFlags = $false
 Import-Module (Join-Path $PSScriptRoot 'CapturedProcess.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'EvaluationConfig.psm1')
+$effectiveReasoningEffort = if ($PSBoundParameters.ContainsKey('ReasoningEffort')) { $ReasoningEffort }
+    else { Get-ModelReasoningEffort $Model }
 
 function Write-Json($Path, $Value) {
     ConvertTo-Json -InputObject $Value -Depth 30 | Set-Content -LiteralPath $Path -Encoding utf8
@@ -217,7 +220,7 @@ $environmentEntries = @($ProcessEnvironment.Keys | Sort-Object | ForEach-Object 
 $environmentJson = ConvertTo-Json -InputObject $environmentEntries -Depth 5 -Compress
 $environmentFingerprint = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($environmentJson)))
 $policy = [ordered]@{
-    reasoningEffort = $ReasoningEffort; availableTools = @($AvailableTool)
+    reasoningEffort = $effectiveReasoningEffort; availableTools = @($AvailableTool)
     noTools = [bool]$NoTools; disableBuiltinMcps = [bool]$DisableBuiltinMcps
     noCustomInstructions = [bool]$NoCustomInstructions; copilotHome = $CopilotHome
     promptTransport = 'utf8-stdin-v1'
@@ -255,6 +258,7 @@ $meta = @{
     startedAt = [DateTimeOffset]::UtcNow.ToString('o'); state = 'starting'
     sessionId = $run.sessionId; resume = [bool]$Resume
     requestedAgent = $Agent; requestedModel = $Model
+    reasoningEffort = $effectiveReasoningEffort
     timeoutSeconds = $TimeoutSeconds
     collectorSha256 = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash
     evaluation = 'not_scored'; errors = @()
@@ -264,6 +268,7 @@ try {
     $prompt | Set-Content -LiteralPath (Join-Path $turn 'input.txt') -Encoding utf8 -NoNewline
     Copy-Item -LiteralPath $PSCommandPath -Destination (Join-Path $turn 'collector.ps1')
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'CapturedProcess.psm1') -Destination $turn
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'EvaluationConfig.psm1') -Destination $turn
     Write-Json (Join-Path $turn 'turn.json') $meta
     $meta.cliVersion = (Invoke-EvidenceCommand $executable ($launcher + @('--no-auto-update', '--version')) (Join-Path $turn 'version')).Trim()
     $isolationArguments = @()
@@ -335,7 +340,7 @@ try {
     if ($effectiveCliModel) { $cliArgs += @('--model', $effectiveCliModel) }
     if ($effectiveAutoTier) { $cliArgs += @('--auto-tier', $effectiveAutoTier) }
     if ($script:enableFusionFeatureFlags) { $cliArgs += '--experimental' }
-    if ($ReasoningEffort) { $cliArgs += @('--reasoning-effort', $ReasoningEffort) }
+    if ($effectiveReasoningEffort) { $cliArgs += @('--reasoning-effort', $effectiveReasoningEffort) }
     if ($NoTools -or $AvailableTool.Count) {
         $cliArgs += '--available-tools'
         if (-not $NoTools) { $cliArgs += $AvailableTool }

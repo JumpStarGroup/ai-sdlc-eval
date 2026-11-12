@@ -8,16 +8,32 @@ param(
     [Parameter(Mandatory)][string]$TemplateFile,
     [string]$ParticipantModel = 'gpt-6.1-sol',
     [string[]]$TargetModels = @('auto', 'gpt-6-luna'),
+    [ValidateNotNullOrEmpty()][string]$TargetConditions,
+    [ValidateSet('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')][string]$ParticipantReasoningEffort,
+    [ValidateSet('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')][string]$ReasoningEffort = 'medium',
+    [string]$ModelReasoningEfforts = '{}',
     [string]$CliPath = 'copilot',
     [switch]$UseGitHubCliAuth
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 Import-Module (Join-Path $PSScriptRoot 'RunDirectory.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'EvaluationConfig.psm1') -Force
+$effortOverrides = Read-ModelReasoningEfforts $ModelReasoningEfforts
+if ($PSBoundParameters.ContainsKey('TargetConditions') -and $PSBoundParameters.ContainsKey('TargetModels')) {
+    throw 'Use either TargetConditions or TargetModels, not both.'
+}
+$resolvedConditions = @(Read-TargetConditions $TargetConditions $TargetModels $ReasoningEffort $effortOverrides)
+$TargetModels = @($resolvedConditions | ForEach-Object { $_.model })
 $source = (Resolve-Path -LiteralPath $SourceRepository).Path
 $templatePath = (Resolve-Path -LiteralPath $TemplateFile).Path
 $templateRoot = Split-Path $templatePath
 $template = Get-Content $templatePath -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+$targetAgentFile = if ($template['targetAgentFile']) {
+    Resolve-EvaluationAgent $template.targetAgentFile $templateRoot $template.targetAgent
+} else {
+    Resolve-EvaluationAgent ".github\agents\$($template.targetAgent).agent.md" $source $template.targetAgent
+}
 $caseId = if ($template.ContainsKey('caseId')) { $template.caseId } else { [IO.Path]::GetFileNameWithoutExtension($templatePath).Split('-')[0] }
 if ($caseId -isnot [string] -or $caseId -cnotmatch '^[a-zA-Z0-9][a-zA-Z0-9-]*$') { throw 'caseId must be a safe directory name.' }
 if ([string]::IsNullOrWhiteSpace($RunDirectory)) {
@@ -45,7 +61,10 @@ foreach ($protected in @($source, $framework)) {
 }
 $savedPath = $env:PATH
 $savedTokens = @{}
-$comparison = @{ runDirectory = $root; participantModel = $ParticipantModel; sourceRepository = $source; conditions = @(); excludedFiles = @(); baseline = @{} }
+$participantEffort = if ($ParticipantReasoningEffort) { $ParticipantReasoningEffort }
+    else { Get-ModelReasoningEffort $ParticipantModel $ReasoningEffort $effortOverrides }
+$comparison = @{ runDirectory = $root; participantModel = $ParticipantModel; participantReasoningEffort = $participantEffort
+    sourceRepository = $source; conditions = @(); excludedFiles = @(); baseline = @{} }
 try {
     $env:PATH = $PSHOME + [IO.Path]::PathSeparator + $env:PATH
     if ($UseGitHubCliAuth) {
@@ -78,6 +97,13 @@ try {
         Copy-Item -LiteralPath $path -Destination $destination
         $comparison.baseline[$relative] = (Get-FileHash $destination).Hash
     }
+    Copy-Item -LiteralPath $targetAgentFile -Destination (Join-Path $root 'target.agent.md')
+    $agentRelative = ".github/agents/$($template.targetAgent).agent.md"
+    $baselineAgent = Join-Path $baselineRoot $agentRelative
+    [void](New-Item -ItemType Directory -Path (Split-Path $baselineAgent) -Force)
+    Copy-Item -LiteralPath (Join-Path $root 'target.agent.md') -Destination $baselineAgent -Force
+    $comparison.baseline[$agentRelative] = (Get-FileHash -LiteralPath $baselineAgent).Hash
+    $comparison['targetAgentHash'] = $comparison.baseline[$agentRelative]
     $knowledge = [IO.Path]::GetFullPath($template.knowledgeFile, $templateRoot)
     $participant = [IO.Path]::GetFullPath($template.participantAgentFile, $templateRoot)
     Copy-Item $knowledge (Join-Path $root 'knowledge.md')
@@ -88,6 +114,7 @@ try {
         $modelName = $TargetModels[$index].ToLowerInvariant() -replace '^gpt-\d+(?:\.\d+)?-', ''
         $modelName = ($modelName -replace '[^a-z0-9-]', '-').Trim('-')
         if (-not $modelName) { throw 'Model must have a nonempty directory label.' }
+        if ($TargetConditions -and $resolvedConditions[$index].reasoningEffort) { $modelName += '-' + $resolvedConditions[$index].reasoningEffort }
         $conditionName = '{0}-{1}-{2:d2}' -f $caseId.ToLowerInvariant(), $modelName, ($index + 1)
         $conditionRoot = Join-Path $root $conditionName
         $workspace = Join-Path $conditionRoot 'product'
@@ -107,12 +134,16 @@ try {
         $config.runDirectory = Join-Path $conditionRoot 'dialogue'
         $config.targetModel = $TargetModels[$index]
         $config.participantModel = $ParticipantModel
+        $config['targetAgentFile'] = Join-Path $root 'target.agent.md'
+        $config['targetReasoningEffort'] = $resolvedConditions[$index].reasoningEffort
+        $config['participantReasoningEffort'] = $participantEffort
         if (-not $config.ContainsKey('policy')) { $config['policy'] = @{} }
         $config.knowledgeFile = Join-Path $root 'knowledge.md'
         $config.participantAgentFile = Join-Path $root 'participant.agent.md'
         $configFile = Join-Path $conditionRoot 'config.json'
         $config | ConvertTo-Json -Depth 15 | Set-Content $configFile -Encoding utf8
-        $comparison.conditions += @{ name = $conditionName; model = $TargetModels[$index]; configFile = $configFile; runDirectory = $config.runDirectory; state = 'prepared' }
+        $comparison.conditions += @{ name = $conditionName; model = $TargetModels[$index]; requestedReasoningEffort = $config.targetReasoningEffort
+            configFile = $configFile; runDirectory = $config.runDirectory; state = 'prepared' }
     }
     $comparison | ConvertTo-Json -Depth 20 | Set-Content (Join-Path $root 'comparison.json') -Encoding utf8
     foreach ($condition in $comparison.conditions) {
@@ -145,14 +176,15 @@ try {
             $condition['participantAiCredits'] = $report.usage.participant.aiCredits
         }
         $comparison | ConvertTo-Json -Depth 20 | Set-Content (Join-Path $root 'comparison.json') -Encoding utf8
-        $indexLines = @('# 本次比较测试索引', '', '| PM 请求模型 | PM 实际模型 | 结果 | 完整会话 | 被评估 Agent AI credit |', '| --- | --- | --- | --- | --- |')
+        $indexLines = @('# 本次比较测试索引', '', '| 请求模型 | Effort | 实际模型 | 结果 | 完整会话 | 被评估 Agent AI credit |', '| --- | --- | --- | --- | --- | --- |')
         foreach ($entry in $comparison.conditions) {
             $credit = if ($entry.Contains('targetAiCredits') -and $null -ne $entry.targetAiCredits) {
                 ([decimal]$entry.targetAiCredits).ToString('0.00', [Globalization.CultureInfo]::InvariantCulture)
             } else { '未知' }
             $link = if ($entry.Contains('summary')) { "[打开本组独立汇总]($($entry.summary))" } else { '尚未运行' }
             $actual = if ($entry.Contains('observedTargetModels') -and $entry.observedTargetModels.Count) { $entry.observedTargetModels -join ', ' } else { '未知（尚无实际模型证据）' }
-            $indexLines += "| $($entry.model) | $actual | $($entry.state) | $link | $credit |"
+            $effortLabel = if ($entry.requestedReasoningEffort) { $entry.requestedReasoningEffort } else { 'CLI routing default' }
+            $indexLines += "| $($entry.model) | $effortLabel | $actual | $($entry.state) | $link | $credit |"
         }
         $indexLines | Set-Content (Join-Path $root 'summary.md') -Encoding utf8
     }

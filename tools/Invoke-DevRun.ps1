@@ -7,8 +7,10 @@ param(
     [Parameter(Mandatory)][hashtable]$Verification,
     [Parameter(Mandatory)][string]$SourceRepository,
     [Parameter(Mandatory)][string]$InputsDirectory,
-    [Parameter(Mandatory)][string[]]$TargetModels,
-    [string]$ReasoningEffort,
+    [string[]]$TargetModels,
+    [ValidateNotNullOrEmpty()][string]$TargetConditions,
+    [ValidateSet('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')][string]$ReasoningEffort = 'medium',
+    [string]$ModelReasoningEfforts = '{}',
     [Parameter(Mandatory)][string]$CliPath,
     [switch]$UseGitHubCliAuth
 )
@@ -17,6 +19,15 @@ Set-StrictMode -Version Latest
 Import-Module (Join-Path $PSScriptRoot 'DevExecution.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'CapturedProcess.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'DevDelivery.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'EvaluationConfig.psm1') -Force
+$effortOverrides = Read-ModelReasoningEfforts $ModelReasoningEfforts
+if ($PSBoundParameters.ContainsKey('TargetConditions') -and $PSBoundParameters.ContainsKey('TargetModels')) {
+    throw 'Use either TargetConditions or TargetModels, not both.'
+}
+$resolvedConditions = @(Read-TargetConditions $TargetConditions $TargetModels $ReasoningEffort $effortOverrides)
+$TargetModels = @($resolvedConditions | ForEach-Object { $_.model })
+$effectiveEfforts = @{}
+foreach ($model in $TargetModels) { $effectiveEfforts[$model] = Get-ModelReasoningEffort $model $ReasoningEffort $effortOverrides }
 
 function Write-DevJson([string]$Path, $Value) {
     $Value | ConvertTo-Json -Depth 35 | Set-Content -LiteralPath $Path -Encoding utf8
@@ -41,7 +52,7 @@ $inputs = Join-Path $root 'inputs'
 Get-ChildItem -LiteralPath $InputsDirectory -File | Copy-Item -Destination $inputs
 $frameworkSnapshot = Join-Path $inputs 'framework'
 [void](New-Item -ItemType Directory -Path $frameworkSnapshot)
-foreach ($name in @('Invoke-DevRun.ps1', 'DevExecution.psm1', 'DevDelivery.psm1', 'CapturedProcess.psm1', 'Invoke-SdlcCapture.ps1', 'DialoguePolicy.psm1', 'Export-DevReport.ps1')) {
+foreach ($name in @('Invoke-DevRun.ps1', 'DevExecution.psm1', 'DevDelivery.psm1', 'EvaluationConfig.psm1', 'CapturedProcess.psm1', 'Invoke-SdlcCapture.ps1', 'DialoguePolicy.psm1', 'Export-DevReport.ps1')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination $frameworkSnapshot
 }
 $runtimeDirectories = @(if ($Project.ContainsKey('runtimeDirectories')) { $Project.runtimeDirectories })
@@ -65,7 +76,7 @@ Get-ChildItem -LiteralPath $frameworkSnapshot -File | ForEach-Object {
 }
 Write-DevJson (Join-Path $root 'input-manifest.json') $planSnapshot
 $comparison = @{ schemaVersion = 1; stage = 'dev'; executor = 'single-shot-dev-v1'; runDirectory = $root
-    requestedReasoningEffort = $(if ($ReasoningEffort) { $ReasoningEffort } else { $null })
+    requestedReasoningEffort = $ReasoningEffort; modelReasoningEfforts = $effectiveEfforts
     sourceRepository = $Plan.sourceRepository; conditions = @(); evaluation = 'python-api-tests'
     acceptanceConfigured = [bool]$acceptance; modelCallsStarted = $false; state = 'prepared'; passed = $false
     startedAt = $runStartedAt.ToString('o') }
@@ -73,6 +84,7 @@ for ($index = 0; $index -lt $TargetModels.Count; $index++) {
     $preparationStartedAt = [DateTimeOffset]::UtcNow
     $label = ($TargetModels[$index].ToLowerInvariant() -replace '[^a-z0-9-]', '-').Trim('-')
     if (-not $label) { throw 'Invalid Dev model label.' }
+    if ($TargetConditions -and $resolvedConditions[$index].reasoningEffort) { $label += '-' + $resolvedConditions[$index].reasoningEffort }
     $name = '{0}-{1}-{2:d2}' -f $Plan.caseId, $label, ($index + 1)
     $conditionRoot = Join-Path $root $name
     $workspace = Join-Path $conditionRoot 'product'
@@ -93,7 +105,7 @@ for ($index = 0; $index -lt $TargetModels.Count; $index++) {
     $config = @{
         repositoryPath = $workspace; runDirectory = (Join-Path $conditionRoot 'dev')
         model = $TargetModels[$index]; timeoutSeconds = $Phase.policy.timeoutSeconds
-        requestedReasoningEffort = $comparison.requestedReasoningEffort
+        requestedReasoningEffort = $resolvedConditions[$index].reasoningEffort
         verification = $Verification; runtimeDirectories = $runtimeDirectories
         initialRequest = $Plan.initialRequest
         preparationStartedAt = $preparationStartedAt.ToString('o')
@@ -102,7 +114,7 @@ for ($index = 0; $index -lt $TargetModels.Count; $index++) {
     $configFile = Join-Path $conditionRoot 'config.json'
     Write-DevJson $configFile $config
     $comparison.conditions += @{ name = $name; model = $TargetModels[$index]; configFile = $configFile
-        requestedReasoningEffort = $comparison.requestedReasoningEffort
+        requestedReasoningEffort = $config.requestedReasoningEffort
         runDirectory = $config.runDirectory; state = 'prepared'; calls = 0 }
 }
 Write-DevJson (Join-Path $root 'comparison.json') $comparison
@@ -178,7 +190,7 @@ No dialogue protocol or special completion marker is required. The framework ind
                 CopilotHome = (Join-Path $conditionRoot 'target-home'); DisableBuiltinMcps = $true
                 TimeoutSeconds = $Phase.policy.timeoutSeconds; ProcessEnvironment = $environment
             }
-            if ($ReasoningEffort) { $captureParameters.ReasoningEffort = $ReasoningEffort }
+            if ($condition.requestedReasoningEffort) { $captureParameters.ReasoningEffort = $condition.requestedReasoningEffort }
             $result.calls = 1
             $comparison.modelCallsStarted = $true
             $planSnapshot.modelCallsStarted = $true

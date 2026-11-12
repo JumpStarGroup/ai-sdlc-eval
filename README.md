@@ -37,10 +37,21 @@ VS Code Task 只是调用同一个 CLI 的可选快捷方式。
 
 | 阶段 | 默认阶段 Profile | 场景提供的主要输入 |
 | --- | --- | --- |
-| `req` | [pm-clarification.json](profiles/pm-clarification.json) | 私有业务知识、领域评分 |
-| `design` | [architect-design.json](profiles/architect-design.json) | 已确认需求、设计领域评分 |
-| `dev` | [developer-coding.json](profiles/developer-coding.json) | 已确认设计及参考需求、验收设置 |
-| `test` | [backend-testing.json](profiles/backend-testing.json) | 指定的 Dev 交付，不在 `stages` 中新增配置 |
+| `req` | [pm-clarification.json](profiles/stages/pm-clarification.json) | 私有业务知识、领域评分 |
+| `design` | [architect-design.json](profiles/stages/architect-design.json) | 已确认需求、设计领域评分 |
+| `dev` | [developer-coding.json](profiles/stages/developer-coding.json) | 已确认设计及参考需求、验收设置 |
+| `test` | [backend-testing.json](profiles/stages/backend-testing.json) | 指定的 Dev 交付，不在 `stages` 中新增配置 |
+
+Profile 按职责分类，不是每个 JSON 都是待测角色：
+
+| 子目录 | 用途 |
+| --- | --- |
+| [stages](profiles/stages) | 四阶段角色绑定、工具权限、预算和交互策略；日常运行入口 |
+| [policies](profiles/policies) | Req/Design 共用对话控制器的默认政策和可覆盖字段集合，不是角色定义 |
+| [rubrics](profiles/rubrics) | Req/Design 后处理使用的通用结果质量评分维度，不含业务规则 |
+| [legacy](profiles/legacy) | 旧 PM/Plan 能力配置及结构化知识 Schema；不属于当前四阶段必需配置 |
+
+角色正文统一放在 [agents](agents)，Profile 只绑定文件和执行政策。
 
 阶段 Profile 是该阶段工具权限、调用预算、交互策略和通用提示的配置来源。
 真实业务内容不放入 Profile：Req 从外部知识的 `## 初始需求` 提取首条业务输入；
@@ -51,9 +62,29 @@ Req/Design 的统一入口将三层输入组合成临时对话配置，交给底
 并将生效配置和输入冻结到本次运行的 `inputs` 中；不需要维护业务专属对话模板。
 底层工具仍保留直接调用接口用于兼容和专项诊断，但它需要显式配置，
 直接运行不等于经过统一入口的阶段编排和评分。
-[dialogue-policy.json](profiles/dialogue-policy.json)是底层直接调用时的默认政策；
-统一入口传入完整阶段政策并覆盖它，因此修改该默认文件不会改变正常的 Req/Design 阶段设置。
+[dialogue-policy.json](profiles/policies/dialogue-policy.json)在 Req/Design 对话控制器启动时始终读取，
+提供默认值和允许覆盖的政策字段集合。统一入口传入完整阶段政策并覆盖其值，
+因此日常调整 Req/Design 应修改各自阶段 Profile，而不是这里的默认值；
+但当前控制器仍依赖这个文件，不能仅因值被覆盖就删除它。
 冻结的运行配置是历史证据，不是需要手工维护的下一轮配置。
+
+### 共享配置由哪些阶段使用
+
+| 文件 | Req | Design | Dev / Test |
+| --- | --- | --- | --- |
+| [dialogue-policy.json](profiles/policies/dialogue-policy.json) | 对话控制器读取；生效值来自 PM Profile 的 `policy` | 同一控制器读取；生效值来自 Architect Profile 的 `policy` | 不读取；使用各自阶段执行政策 |
+| [result-quality.json](profiles/rubrics/result-quality.json) | 阶段 `generalRubricFile` 引用，交付后交独立评分者 | 同样引用，结合确认需求和设计领域评分 | 不使用模型评分表；依靠独立测试及交付/只读完整性检查 |
+| [knowledge.schema.json](profiles/legacy/knowledge.schema.json) | 不使用 | 不使用 | 不使用 |
+
+Req/Design 的默认评分比例都是通用 30% + 外部领域 70%，由阶段 Profile 的 `rubricWeights` 决定。
+通用评分表不是 PM 或 Architect 的工作指令，不注入被测角色或业务参与者，只提供给独立评分者。
+`-DialogueOnly` 跳过评分模型调用，但当前 Req/Design 预检及冻结输入仍要求有效评分表。
+独立结果评分工具也可显式读取通用评分表，其直接调用默认比例与统一入口不同。
+
+知识 Schema 只是历史结构化知识格式的参考文件，没有当前运行代码加载它；
+旧知识参与者工具也由 [KnowledgeParticipant.psm1](tools/KnowledgeParticipant.psm1) 自行校验 JSON。
+当前 Req 使用外部 Markdown 知识，Design 使用已确认需求，Dev/Test 使用各自交付输入，
+因此不再设置活跃的 `schemas` 分类；历史工具、格式参考和旧运行证据没有因此删除。
 
 ## 2. 四阶段
 
@@ -64,7 +95,12 @@ Req/Design 的统一入口将三层输入组合成临时对话配置，交给底
 | `dev` | `SDLCRole_Dev` | 已确认设计与参考需求 | 每模型一次 CLI；实现、自测和独立 Python/pytest 后端验收，无参与者或模型评分 |
 | `test` | `SDLCRole_Test` | 冻结 Dev 交付 | 独立主 CLI 会话；后端只读复验，不续接 Dev 会话，目前不实现 Web |
 
-被测角色实际定义来自产品 `.github\agents`，随运行冻结。项目指令、`AGENTS.md` 和可选项目契约保留在产品基线中，不把规则正文重复注入业务知识。
+默认被测角色由框架 [agents](agents) 提供，不要求产品包含 `.github\agents` 或某个固定契约文件。
+Req/Design/Dev 的 `targetAgentFile` 与 `participantAgentFile` 一样相对于阶段 Profile 解析；
+Test 沿用 `agentSource: profile` 与 `agentFile`。角色名必须与文件 frontmatter 的 `name` 完全一致。
+运行先冻结所选定义，再安装到隔离副本的 `.github\agents`；覆盖副本内同名角色，但不修改产品源仓库。
+项目指令、`AGENTS.md` 和可选项目契约仍保留在产品基线中，不把规则正文重复注入业务知识。
+可用自定义 Profile 显式选择其他角色文件；Test 仍兼容显式 `agentSource: project`，但不再默认依赖项目角色。
 `design` 对应 Architect；不设独立 Planner。统一入口拒绝 `plan` 和旧扁平场景。
 
 需求和设计不自动批准；模拟参与者不是自然人审批人。人工审查并确认后才能把交付作为下一阶段输入。
@@ -87,7 +123,7 @@ Test 后端通过不代表 Web 完成、业务验收通过或获准发布。
 | `excludePatterns` | 从产品基线排除私有文件的模式 |
 | `runtimeDirectories` | Dev 需复制的已安装依赖和可写状态目录，不自动下载依赖 |
 | `projectContractPath` | 可选，产品内的角色工作契约 |
-| `reportWorkspacePath` | 使用项目角色执行只读 Test 时必需，产品副本内的 Markdown 报告路径模板 |
+| `reportWorkspacePath` | 执行只读 Test 时必需，产品副本内的 Markdown 报告路径模板，与角色来源无关 |
 
 `reportWorkspacePath` 不能覆盖已有产品文件；不限定产品必须使用某个文档目录。
 基础 Test Profile 只定义角色与测试政策，不绑定项目契约或报告布局。
@@ -117,8 +153,11 @@ Dev 验收示例：
 ```
 
 可选 `acceptanceDirectory` 指向外部可信验收测试。缺省只运行回归集合，不能冒充独立业务验收。
-Dev Profile 第 5 版仅保留 `callLimit: 1`、`timeoutSeconds` 和 `disableBuiltinMcps` 政策。
+Dev Profile 第 6 版仅保留 `callLimit: 1`、`timeoutSeconds` 和 `disableBuiltinMcps` 政策。
 旧自定义 Dev 配置需删除参与者、rubric、评分比例和对话控制字段；未知字段明确报错，不静默忽略。
+旧扁平 Profile 路径已迁移到上述分类子目录；自定义 Req/Design/Dev Profile 还须添加 `targetAgentFile`，
+并更新相对角色/评分路径。场景不指定 `phaseProfile` 时自动使用新的框架默认路径。
+旧运行中的冻结文件和路径保持不变，不回写历史证据。
 
 ## 4. 运行
 
@@ -145,16 +184,72 @@ pwsh -NoProfile -File .\tools\Invoke-SDLC-Eval.ps1 `
 | 参数 | 行为 |
 | --- | --- |
 | `-TargetModels` | 候选模型，支持数组/逗号分隔，分别执行；可使用 CLI 支持的路由模型 |
+| `-TargetConditions` | Req/Design/Dev 的条件 JSON 数组，每项含 `model`、可选 `reasoningEffort`；与显式 `-TargetModels` 互斥，可重复模型 ID |
 | `-ParticipantModel` / `-EvaluatorModel` | Req/Design 使用明确模型，不接受 Auto/Fusion；Dev 不使用 |
-| `-ReasoningEffort` | 仅显式 `-Stage dev`，适用于本轮 Dev 条件，不传给其他角色 |
+| `-ReasoningEffort` | 所有阶段/角色中明确模型的默认 effort，缺省 `medium`；路由模型默认不额外强制 effort |
+| `-ModelReasoningEfforts` | JSON 对象，按模型 ID 覆盖 effort；优先于全局值，覆盖被测、参与者、评分及独立/接续 Test，但可被条件/角色设置覆盖 |
+| `-ParticipantReasoningEffort` / `-EvaluatorReasoningEffort` | Req/Design 各自角色的 effort 覆盖，优先于模型映射；省略时仍继承模型映射/全局默认 |
 | `-DialogueOnly` | Req/Design 跳过模型评价；不跳过 Dev 验收 |
 | `-RunsRoot` / `-RunLabel` | Req/Design/Dev 的本轮输出根目录及标签覆盖 |
 | `-RunDirectory` | 本阶段输出目录覆盖，目录必须全新；适用于独立 Test |
 | `-CliPath` | 显式指定优先；否则先查 PATH 中支持的 CLI，再尝试 Windows 上 VS Code 附带版本 |
-| `-UseGitHubCliAuth` | 统一入口默认启用，直接 PowerShell 调用可用 `:$false` 关闭 |
+| `-UseGitHubCliAuth` | 统一入口默认启用，会临时清除认证 token 环境变量；需要继承当前终端认证变量时显式传 `-UseGitHubCliAuth:$false` |
 | `-WithTest` / `-TestModels` | Dev 通过后可选接续独立 Test；Test 模型不继承 Dev 模型 |
 | `-DevConditions` | 独立 Test 可选择部分 Dev 条件，省略则全部 |
 | `-TestProfileFile` / `-TestRunDirectory` | 覆盖 Test 政策/一键流程输出 |
+
+**认证注意：普通 CLI 已登录，不代表隔离运行能取得相同认证。**
+改变工作目录不会改变普通 CLI 的用户配置目录；框架则为角色设置独立 `COPILOT_HOME`。
+同时，统一入口默认启用 `UseGitHubCliAuth`，对话和评价工具会临时清除
+`COPILOT_GITHUB_TOKEN`、`GH_TOKEN`、`GITHUB_TOKEN`，结束后恢复。
+如需保留当前终端提供的认证变量，请在同一条运行命令中显式添加 `-UseGitHubCliAuth:$false`；
+该设置会传递到被测角色、参与者和评价者，不改变目录隔离，也不会自动登录。
+`gh auth login` 不是唯一认证方式；不要将 `gh` 未登录直接等同于 Copilot 未登录。
+预检中的 `useGitHubCliAuth` 只证明参数生效，不验证凭据是否可用。
+遇到 `No authentication information found` 时，先比较成功/失败批次的
+`inputs\manifest.json` 中该字段及 CLI 错误证据，不要直接重跑整批或复制凭据到运行目录。
+
+例如，同轮两个被测模型分别使用 `high` 和 `medium`，参与者使用 `low`，其余模型默认 `medium`：
+
+```powershell
+.\tools\Invoke-SDLC-Eval.ps1 -ScenarioFile C:\evaluation-config\experiments\sample.json `
+  -Stage req -TargetModels "gpt-6-luna,gpt-6.1-sol" -ParticipantModel "gpt-5.3-codex" `
+  -ModelReasoningEfforts '{"gpt-6-luna":"high","gpt-5.3-codex":"low"}'
+```
+
+允许值为 `none/minimal/low/medium/high/xhigh/max`。默认参与者和评价者模型都是 `gpt-6.1-sol`，
+模型与全局 effort 默认值在统一入口的参数定义中，不在项目、场景或阶段 Profile 中。
+优先级是：被测条件中的 `reasoningEffort` 或参与者/评价者的角色覆盖 > 模型 ID 映射 > 全局默认 `medium`。
+因此同一模型可以作为多个被测条件，或同时作为参与者/评价者，分别采用不同 effort。
+`modelReasoningEfforts` 记录模型级基准；实际被测设置以预检/冻结输入中的 `targetConditions` 为准，
+参与者和评价者以 `roleReasoningEfforts` 为准，不用单个模型键代表整批多个条件。
+非空请求值通过 CLI 的 `--reasoning-effort` 实际传入，条件配置及逐调用证据也记录请求值。
+非法映射在调用模型前报错。框架只校验通用取值；模型/CLI 是否支持某个级别需实际验证，
+不支持时保留真实失败，不静默降级。
+这是有意行为变更：过去 Dev 独有的全局参数现在作用于所有被调用角色。
+
+同批四条件示例（默认只预检，不产生费用）：
+
+```powershell
+$targets = @(
+  @{ model = 'fusion:high' }
+  @{ model = 'fusion:standard' }
+  @{ model = 'gpt-6.1-sol'; reasoningEffort = 'medium' }
+  @{ model = 'gpt-6.1-sol'; reasoningEffort = 'high' }
+) | ConvertTo-Json -Compress
+.\tools\Invoke-SDLC-Eval.ps1 -ScenarioFile C:\evaluation-config\experiments\sample.json `
+  -Stage req -TargetConditions $targets `
+  -ParticipantModel gpt-6.1-sol -ParticipantReasoningEffort high `
+  -EvaluatorModel gpt-6.1-sol -EvaluatorReasoningEffort high
+```
+
+Fusion 的 `standard/high/max` 是路由档位，不是 reasoning effort：
+`fusion:standard` 对应 `auto/balance`，`fusion:high` 对应 `auto/hydrafusion`。
+Fusion、Auto、HydraFusion 默认不传 `--reasoning-effort`，记录为 `null`（CLI 路由默认），
+不会把路由档位的 high 自动当作 effort high，也不会从全局 `medium/high` 推断内部模型设置。
+只有条件或模型映射显式指定时才额外传 effort；条件 `reasoningEffort: null` 也可明确保留路由默认，
+但明确模型不接受 null。请求值不证明每个内部阶段采用同一 effort，内部行为以 CLI 实际证据为准。
+使用 `-TargetConditions` 时，明确 effort 会进入条件目录名；原 `-TargetModels` 目录命名保持兼容。
 
 Req/Design 默认每个模型条件下双方合计最多 10 次对话调用、每次 900 秒；
 独立评分调用不计入该对话预算。Dev/Test 默认每条件一次、3600 秒。

@@ -1,5 +1,5 @@
 #requires -Version 7.0
-param([string[]]$Cases = @('success', 'reasoning-max', 'tamper', 'feature-failed', 'no-change', 'protected', 'model-mismatch',
+param([string[]]$Cases = @('success', 'reasoning-max', 'condition-matrix', 'tamper', 'feature-failed', 'no-change', 'protected', 'model-mismatch',
     'corrupt', 'corrupt-recovered', 'failed-corrupt', 'timeout-corrupt', 'tests-failed-corrupt',
     'missing-model-corrupt', 'mismatch-corrupt', 'runtime-error-corrupt', 'test-timeout', 'preflight-failed', 'updated-regression', 'regression-only'))
 $ErrorActionPreference = 'Stop'
@@ -18,8 +18,6 @@ try {
     }
     "---`nname: fixture-developer`n---`nImplement code and run Python tests." |
         Set-Content (Join-Path $source '.github\agents\fixture-developer.agent.md')
-    "---`nname: SDLCRole_Test`n---`nProject-owned independent Test role." |
-        Set-Content (Join-Path $source '.github\agents\SDLCRole_Test.agent.md')
     'Project contract: backend tests belong to Dev.' |
         Set-Content (Join-Path $source 'docs\PROJECT-WORKFLOW-ROLES-DEV-TEST.md')
     'answer = 1' | Set-Content (Join-Path $source 'answer.py')
@@ -44,10 +42,11 @@ def test_regression():
     Assert ($LASTEXITCODE -eq 0) 'Fixture initialization failed.'
     & git -C $source add --all
     Assert ($LASTEXITCODE -eq 0) 'Fixture staging failed.'
-    $phase = Get-Content (Join-Path $framework 'profiles\developer-coding.json') -Raw | ConvertFrom-Json -AsHashtable
+    $phase = Get-Content (Join-Path $framework 'profiles\stages\developer-coding.json') -Raw | ConvertFrom-Json -AsHashtable
     Assert ($phase.policy.timeoutSeconds -eq 3600 -and $phase.policy.callLimit -eq 1 -and
         $phase.policy.Count -eq 3 -and $phase.policy.disableBuiltinMcps) 'Default Dev has only single-call, timeout and MCP policy.'
     $phase.targetAgent = 'fixture-developer'
+    $phase.targetAgentFile = Join-Path $source '.github\agents\fixture-developer.agent.md'
     $phase.policy.timeoutSeconds = 10
     $phasePath = Join-Path $fixture 'phase.json'
     $project = @{ schemaVersion = 1; id = 'fixture'; repositoryPath = $source; runsRoot = (Join-Path $fixture 'runs')
@@ -68,18 +67,13 @@ def test_regression():
     $manifest | ConvertTo-Json -Depth 15 | Set-Content $manifestPath
     $effortPlan = & $runner -ScenarioFile $manifestPath -Stage dev -Mode ValidateOnly -ReasoningEffort max -CliPath $fake
     Assert ($effortPlan.requestedReasoningEffort -ceq 'max' -and -not (Test-Path $effortPlan.runDirectory)) 'Validation must retain explicit effort without running models.'
-    foreach ($arguments in @(@{ Stage = 'design'; ReasoningEffort = 'max' }, @{ Stage = 'test'; ReasoningEffort = 'max' },
-        @{ Stage = 'dev'; ReasoningEffort = 'invalid-effort' })) {
+    foreach ($arguments in @(@{ Stage = 'dev'; ReasoningEffort = 'invalid-effort' })) {
         $rejected = $false
         try { & $runner -ScenarioFile $manifestPath -Mode ValidateOnly @arguments | Out-Null } catch {
-            $rejected = if ($arguments.Stage -eq 'dev') {
-                $_.Exception.Message.Contains('ReasoningEffort') -and $_.Exception.Message.Contains('invalid-effort')
-            } else {
-                $_.Exception.Message.StartsWith('-ReasoningEffort requires explicit -Stage dev;')
-            }
+            $rejected = $_.Exception.Message.Contains('ReasoningEffort') -and $_.Exception.Message.Contains('invalid-effort')
             if (-not $rejected) { throw }
         }
-        Assert $rejected 'Reasoning effort must reject unsupported values or non-Dev scope before model invocation.'
+        Assert $rejected 'Reasoning effort must reject unsupported values before model invocation.'
     }
     foreach ($mode in $Cases) {
         $env:DEV_RUN_FIXTURE = $mode
@@ -91,21 +85,27 @@ def test_regression():
         if ($mode -eq 'preflight-failed') { 'answer = 0' | Set-Content (Join-Path $source 'answer.py') }
         $run = Join-Path $fixture $mode
         $before = if (Test-Path $env:DEV_RUN_COUNTER) { @(Get-Content $env:DEV_RUN_COUNTER).Count } else { 0 }
-        $models = @(if ($mode -eq 'success') { 'fixture-model'; 'fixture-other' } else { 'fixture-model' })
+        $models = @(if ($mode -eq 'success') { 'fixture-model'; 'fixture-other' }
+            elseif ($mode -eq 'condition-matrix') { 'fixture-model'; 'fixture-model' } else { 'fixture-model' })
+        $targetOptions = if ($mode -eq 'condition-matrix') {
+            @{ TargetConditions = '[{"model":"fixture-model","reasoningEffort":"medium"},{"model":"fixture-model","reasoningEffort":"high"}]' }
+        } else { @{ TargetModels = $models } }
         $runError = $null
-        $pipelineArgs = if ($mode -eq 'success') { @{ WithTest = $true; TestModels = @('fixture-tester', 'fixture-second-tester') } } else { @{} }
+        $pipelineArgs = if ($mode -eq 'success') { @{ WithTest = $true; TestModels = @('fixture-tester', 'fixture-second-tester')
+            ModelReasoningEfforts = '{"fixture-other":"high","fixture-tester":"low"}' } } else { @{} }
         if ($mode -eq 'reasoning-max') {
             $pipelineArgs = @{ ReasoningEffort = 'max'; WithTest = $true; TestModels = @('fixture-tester') }
         }
         try {
-            & $runner -ScenarioFile $manifestPath -Stage dev -Mode Run -RunDirectory $run -TargetModels $models `
+            & $runner -ScenarioFile $manifestPath -Stage dev -Mode Run -RunDirectory $run @targetOptions `
                 -CliPath $fake -UseGitHubCliAuth:$false @pipelineArgs | Out-Null
         } catch { $runError = $_.Exception.Message }
+        Assert (Test-Path (Join-Path $run 'comparison.json')) "Dev did not prepare comparison evidence: $runError"
         $comparison = Get-Content (Join-Path $run 'comparison.json') -Raw | ConvertFrom-Json -AsHashtable
-        $expectedEffort = if ($mode -eq 'reasoning-max') { 'max' } else { $null }
+        $expectedEffort = if ($mode -eq 'reasoning-max') { 'max' } else { 'medium' }
         $inputManifest = Get-Content (Join-Path $run 'input-manifest.json') -Raw | ConvertFrom-Json -AsHashtable
         Assert ($comparison.requestedReasoningEffort -ceq $expectedEffort -and
-            $inputManifest.requestedReasoningEffort -ceq $expectedEffort) 'Requested effort must be persisted without inventing a default.'
+            $inputManifest.requestedReasoningEffort -ceq $expectedEffort) 'Requested effort must persist with the explicit medium default.'
         $expected = switch ($mode) {
             'tamper' { 'tests_failed' }
             'feature-failed' { 'tests_failed' }
@@ -128,21 +128,19 @@ def test_regression():
         Assert ($progress.phase -eq 'finished' -and $progress.updatedAt) 'Durable progress must identify completion even when conditions fail.'
         Assert ($reportIndex.conditions.Count -eq $models.Count -and $null -ne $reportIndex.timing.durationSeconds) 'Every model must have an indexed report with a measured run duration.'
         foreach ($condition in $comparison.conditions) {
+            $conditionEffort = if (($mode -eq 'success' -and $condition.model -eq 'fixture-other') -or
+                ($mode -eq 'condition-matrix' -and $condition.name -like '*-high-*')) { 'high' } else { $expectedEffort }
             $state = Get-Content (Join-Path $condition.runDirectory 'result.json') -Raw | ConvertFrom-Json -AsHashtable
             Assert ($state.outcome -eq $expected) "$mode expected $expected, got $($state.outcome): $($state.errors -join '; ')"
             Assert ($state.calls -eq [int]($mode -ne 'preflight-failed')) "$mode must never retry a paid invocation."
             $conditionConfig = Get-Content $condition.configFile -Raw | ConvertFrom-Json -AsHashtable
-            Assert ($state.requestedReasoningEffort -ceq $expectedEffort -and
-                $condition.requestedReasoningEffort -ceq $expectedEffort -and
-                $conditionConfig.requestedReasoningEffort -ceq $expectedEffort) 'Condition and result must preserve the requested effort.'
+            Assert ($state.requestedReasoningEffort -ceq $conditionEffort -and
+                $condition.requestedReasoningEffort -ceq $conditionEffort -and
+                $conditionConfig.requestedReasoningEffort -ceq $conditionEffort) 'Condition and result must preserve each model effort.'
             if ($state.calls -eq 1) {
                 $turnMeta = Get-Content (Join-Path $state.capture.turnDirectory 'turn.json') -Raw | ConvertFrom-Json -AsHashtable
                 $effortIndex = [Array]::IndexOf($turnMeta.command.arguments, '--reasoning-effort')
-                if ($expectedEffort) {
-                    Assert ($effortIndex -ge 0 -and $turnMeta.command.arguments[$effortIndex + 1] -ceq $expectedEffort) 'Captured command must contain the requested reasoning effort.'
-                } else {
-                    Assert ($effortIndex -eq -1) 'Omitted effort must preserve CLI defaults.'
-                }
+                Assert ($effortIndex -ge 0 -and $turnMeta.command.arguments[$effortIndex + 1] -ceq $conditionEffort) 'Captured command must contain the resolved reasoning effort.'
             }
             Assert ($null -eq $state.scoring.modelScore) 'Dev must never invent a model score.'
             $report = Get-Content (Join-Path $condition.runDirectory 'report.json') -Raw | ConvertFrom-Json -AsHashtable
@@ -210,11 +208,20 @@ def test_regression():
             Assert ($updatedReport.offlineVerifications.Count -eq 1 -and $updatedReport.offlineVerifications[0].startedAt -and
                 $updatedReport.offlineVerifications[0].incrementalAiCredits -eq 0) 'Offline verification must update model and root reports without charging inherited usage.'
         }
-        if ($mode -eq 'success') {
+        if ($mode -in @('success', 'reasoning-max')) {
             $pipeline = Get-Content (Join-Path $run 'pipeline.json') -Raw | ConvertFrom-Json -AsHashtable
             $testComparison = Get-Content (Join-Path $pipeline.testRun 'comparison.json') -Raw | ConvertFrom-Json -AsHashtable
-            Assert ($pipeline.testState -eq 'backend_tests_passed' -and $testComparison.conditions.Count -eq 4 -and
+            Assert ($pipeline.testState -eq 'backend_tests_passed' -and $testComparison.conditions.Count -eq $(if ($mode -eq 'success') { 4 } else { 1 }) -and
                 -not $pipeline.fullQaCompleted) 'Dev x Test pipeline must create four independent backend conditions, never claim full QA.'
+            foreach ($testCondition in $testComparison.conditions) {
+                $testEffort = if ($mode -eq 'reasoning-max') { 'max' } elseif ($testCondition.model -eq 'fixture-tester') { 'low' } else { 'medium' }
+                $testResult = Get-Content (Join-Path $testCondition.runDirectory 'result.json') -Raw | ConvertFrom-Json -AsHashtable
+                $testMeta = Get-Content (Join-Path $testResult.capture.turnDirectory 'turn.json') -Raw | ConvertFrom-Json -AsHashtable
+                Assert ($testCondition.requestedReasoningEffort -ceq $testEffort -and
+                    $testMeta.reasoningEffort -ceq $testEffort) 'Chained Test resolves its own model effort, not the Dev condition effort.'
+            }
+        }
+        if ($mode -eq 'success') {
             $first = Join-Path (Split-Path $comparison.conditions[0].configFile) 'product\.runtime\state.txt'
             'mutated-copy' | Set-Content $first
             $second = Join-Path (Split-Path $comparison.conditions[1].configFile) 'product\.runtime\state.txt'

@@ -74,6 +74,7 @@ if ($Mode -eq 'Prepare' -or $Mode -eq 'Invoke') {
     $collector = Join-Path $PSScriptRoot 'Invoke-SdlcCapture.ps1'
     Copy-Item -LiteralPath $collector -Destination $root
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'CapturedProcess.psm1') -Destination $root
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'EvaluationConfig.psm1') -Destination $root
     $collector = Join-Path $root 'Invoke-SdlcCapture.ps1'
     $parameters = @{
         PromptFile = (Join-Path $root 'request.json'); RunDirectory = (Join-Path $root 'capture')

@@ -94,6 +94,7 @@ try {
             $meta = Get-Content (Join-Path $turn 'turn.json') -Raw | ConvertFrom-Json -AsHashtable
             $events = @(Get-Content (Join-Path $turn 'events.stdout') | ForEach-Object { $_ | ConvertFrom-Json -AsHashtable })
             $actualArgs = $events[0].data.arguments
+            Assert ($actualArgs -notcontains '--reasoning-effort' -and $null -eq $meta.reasoningEffort) 'Routed selectors preserve CLI reasoning defaults instead of inheriting medium.'
             $runtime = Get-Content (Join-Path $turn 'runtime.json') -Raw | ConvertFrom-Json -AsHashtable
             Assert ($runtime.observedModels.Count -eq 2 -and 'fixture-model' -in $runtime.observedModels -and
                 'fixture-usage-model' -in $runtime.observedModels) 'Selectors must not be reported as concrete models in events or usage metrics.'
@@ -109,6 +110,15 @@ try {
                 Assert (($actualArgs -contains '--experimental') -eq ($tier -ne 'standard')) "$selector experimental flag mismatch."
             }
         }
+        $output = Join-Path $fixture.FullName 'explicit-routing-effort'
+        & pwsh -NoProfile -File $runner -RepositoryPath $repository -PromptFile $promptFile `
+            -RunDirectory $output -CliPath $fake -Model 'fusion:high' -ReasoningEffort medium -TimeoutSeconds 10 | Out-Host
+        Assert ($LASTEXITCODE -eq 0) 'Explicit routing effort capture failed.'
+        $turn = @(Get-ChildItem $output -Directory -Filter 'turn-*')[0].FullName
+        $meta = Get-Content (Join-Path $turn 'turn.json') -Raw | ConvertFrom-Json -AsHashtable
+        $effortIndex = [array]::IndexOf($meta.command.arguments, '--reasoning-effort')
+        Assert ($meta.requestedFusionTier -ceq 'high' -and $meta.requestedAutoTier -ceq 'hydrafusion' -and
+            $effortIndex -ge 0 -and $meta.command.arguments[$effortIndex + 1] -ceq 'medium') 'Explicit reasoning effort must remain independent of the Fusion routing tier.'
         $output = Join-Path $fixture.FullName 'conflicting-tier'
         & pwsh -NoProfile -File $runner -RepositoryPath $repository -PromptFile $promptFile `
             -RunDirectory $output -CliPath $fake -Model 'fusion:high' -AutoTier 'balance' -TimeoutSeconds 10 | Out-Host

@@ -4,8 +4,8 @@ $ErrorActionPreference = 'Stop'
 trap { Write-Output $_.ScriptStackTrace; throw }
 Import-Module (Join-Path $PSScriptRoot '../tools/DialoguePolicy.psm1') -Force
 function Assert($Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
-Assert (Test-Json -LiteralPath (Join-Path $PSScriptRoot '../profiles/dialogue-policy.json')) 'Infrastructure policy is valid JSON.'
-$templatePolicy = Get-Content (Join-Path $PSScriptRoot '../profiles/dialogue-policy.json') -Raw | ConvertFrom-Json -AsHashtable
+Assert (Test-Json -LiteralPath (Join-Path $PSScriptRoot '..\profiles\policies\dialogue-policy.json')) 'Infrastructure policy is valid JSON.'
+$templatePolicy = Get-Content (Join-Path $PSScriptRoot '..\profiles\policies\dialogue-policy.json') -Raw | ConvertFrom-Json -AsHashtable
 Assert ($templatePolicy.minimumParticipantReplies -eq 2 -and $templatePolicy.maxPathRecoveryPrompts -eq 1 -and
     -not [string]::IsNullOrWhiteSpace($templatePolicy.interactionPrompt)) 'Interaction and recovery defaults are explicit in the template.'
 function Reject([scriptblock]$Action) {

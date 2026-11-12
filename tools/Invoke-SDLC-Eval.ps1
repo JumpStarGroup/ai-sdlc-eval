@@ -5,9 +5,13 @@ param(
     [ValidateSet('req', 'design', 'dev', 'test')][string]$Stage,
     [ValidateSet('ValidateOnly', 'Validate', 'Run')][string]$Mode = 'ValidateOnly',
     [string[]]$TargetModels = @('gpt-6-luna'),
-    [ValidateSet('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')][string]$ReasoningEffort,
+    [ValidateNotNullOrEmpty()][string]$TargetConditions,
+    [ValidateSet('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')][string]$ReasoningEffort = 'medium',
+    [string]$ModelReasoningEfforts = '{}',
     [string]$ParticipantModel = 'gpt-6.1-sol',
+    [ValidateSet('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')][string]$ParticipantReasoningEffort,
     [string]$EvaluatorModel = 'gpt-6.1-sol',
+    [ValidateSet('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')][string]$EvaluatorReasoningEffort,
     [switch]$DialogueOnly,
     [string]$RunDirectory,
     [string]$RunsRoot,
@@ -18,14 +22,19 @@ param(
     [string[]]$DevConditions = @(),
     [string[]]$TestModels = @('gpt-6.1-sol'),
     [string]$TestRunDirectory,
-    [string]$TestProfileFile = (Join-Path $PSScriptRoot '..\profiles\backend-testing.json'),
+    [string]$TestProfileFile = (Join-Path $PSScriptRoot '..\profiles\stages\backend-testing.json'),
     [switch]$UseGitHubCliAuth
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 Import-Module (Join-Path $PSScriptRoot 'RunDirectory.psm1') -Force
-if ($PSBoundParameters.ContainsKey('ReasoningEffort') -and $Stage -cne 'dev') {
-    throw '-ReasoningEffort requires explicit -Stage dev; it is not applied to Participant, Evaluator or Test.'
+Import-Module (Join-Path $PSScriptRoot 'EvaluationConfig.psm1') -Force
+$effortOverrides = Read-ModelReasoningEfforts $ModelReasoningEfforts
+if ($PSBoundParameters.ContainsKey('TargetConditions') -and $PSBoundParameters.ContainsKey('TargetModels')) {
+    throw 'Use either TargetConditions or TargetModels, not both.'
+}
+if ($Stage -eq 'test' -and ($TargetConditions -or $ParticipantReasoningEffort -or $EvaluatorReasoningEffort)) {
+    throw 'Test uses TestModels; target conditions and Participant/Evaluator effort are not Test parameters.'
 }
 
 $effectiveUseGitHubCliAuth = if ($PSBoundParameters.ContainsKey('UseGitHubCliAuth')) {
@@ -47,9 +56,9 @@ if ([string]::IsNullOrWhiteSpace($CliPath)) {
 }
 
 $defaultStageProfiles = @{
-    req = (Join-Path $PSScriptRoot '../profiles/pm-clarification.json')
-    design = (Join-Path $PSScriptRoot '../profiles/architect-design.json')
-    dev = (Join-Path $PSScriptRoot '../profiles/developer-coding.json')
+    req = (Join-Path $PSScriptRoot '..\profiles\stages\pm-clarification.json')
+    design = (Join-Path $PSScriptRoot '..\profiles\stages\architect-design.json')
+    dev = (Join-Path $PSScriptRoot '..\profiles\stages\developer-coding.json')
 }
 
 function Read-ScenarioJson([string]$Path) {
@@ -124,6 +133,7 @@ if ($Stage -eq 'test') {
     if ($devInput.caseId -cne $manifest.caseId) { throw 'Test scenario does not match the source Dev case.' }
     & (Join-Path $PSScriptRoot 'Invoke-TestRun.ps1') -DevRunDirectory $DevRunDirectory -DevConditions $DevConditions `
         -TestModels $TestModels -RunDirectory $RunDirectory -Mode $Mode -CliPath $CliPath `
+        -ReasoningEffort $ReasoningEffort -ModelReasoningEfforts $ModelReasoningEfforts `
         -ProfileFile $TestProfileFile -ProjectFile $projectPath -UseGitHubCliAuth:$effectiveUseGitHubCliAuth
     return
 }
@@ -172,14 +182,14 @@ if ($phase.schemaVersion -ne 1 -or $project.schemaVersion -ne 1 -or $phase.stage
 $isDevPhase = $selectedStage -ceq 'dev'
 $isDesignPhase = $selectedStage -ceq 'design'
 if ($isDevPhase) {
-    Assert-ScenarioKeys $phase @('schemaVersion', 'id', 'version', 'stage', 'targetAgent', 'executionMode',
+    Assert-ScenarioKeys $phase @('schemaVersion', 'id', 'version', 'stage', 'targetAgent', 'targetAgentFile', 'executionMode',
         'initialRequestTemplate', 'availableTools', 'allowTools', 'denyTools', 'policy')
 } elseif ($isDesignPhase) {
-    Assert-ScenarioKeys $phase @('schemaVersion', 'id', 'version', 'stage', 'targetAgent', 'participantAgentFile', 'generalRubricFile',
+    Assert-ScenarioKeys $phase @('schemaVersion', 'id', 'version', 'stage', 'targetAgent', 'targetAgentFile', 'participantAgentFile', 'generalRubricFile',
         'participantInput', 'participantContextLabel', 'initialRequestTemplate', 'availableTools', 'allowTools', 'denyTools', 'policy') @('rubricWeights')
     if ($phase.participantInput -cne 'confirmed-requirement') { throw 'Design requires confirmed-requirement participantInput.' }
 } else {
-    Assert-ScenarioKeys $phase @('schemaVersion', 'id', 'version', 'stage', 'targetAgent', 'participantAgentFile', 'generalRubricFile',
+    Assert-ScenarioKeys $phase @('schemaVersion', 'id', 'version', 'stage', 'targetAgent', 'targetAgentFile', 'participantAgentFile', 'generalRubricFile',
         'participantInput', 'participantContextLabel', 'initialRequestSource', 'availableTools', 'allowTools', 'denyTools', 'policy') @('rubricWeights')
     if ($phase.initialRequestSource -cne 'knowledge-heading') { throw 'Unsupported initialRequestSource.' }
     if ($phase.participantInput -cne 'private-knowledge') { throw 'Req requires private-knowledge participantInput.' }
@@ -201,7 +211,14 @@ $TargetModels = @(
         ForEach-Object { $_.Trim() } |
         Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
 )
-if (-not $TargetModels.Count) { throw 'Specify at least one target model.' }
+$resolvedTargetConditions = @(Read-TargetConditions $TargetConditions $TargetModels $ReasoningEffort $effortOverrides)
+$TargetModels = @($resolvedTargetConditions | ForEach-Object { $_.model })
+$targetArguments = if ($TargetConditions) {
+    @{ TargetConditions = (ConvertTo-Json -InputObject $resolvedTargetConditions -Depth 5 -Compress) }
+} else { @{ TargetModels = $TargetModels } }
+if ($isDevPhase -and ($ParticipantReasoningEffort -or $EvaluatorReasoningEffort)) {
+    throw 'ParticipantReasoningEffort and EvaluatorReasoningEffort apply only to Req/Design.'
+}
 if (-not $isDevPhase) {
     foreach ($fixedModel in @($ParticipantModel, $EvaluatorModel)) {
         if ([string]::IsNullOrWhiteSpace($fixedModel) -or $fixedModel -imatch '^(auto(?::.*)?|fusion(?::.*)?|hydrafusion(?:-max)?)$') { throw 'Participant and evaluator models must be explicit.' }
@@ -254,7 +271,7 @@ if (-not $isDevPhase) {
     $generalRubric = Resolve-ScenarioPath $phase.generalRubricFile (Split-Path $phasePath)
 }
 $agentRelative = ".github/agents/$($phase.targetAgent).agent.md"
-$agent = Join-Path $source $agentRelative
+$agent = Resolve-EvaluationAgent $phase.targetAgentFile (Split-Path $phasePath) $phase.targetAgent
 $checkedInputPaths = @($manifestPath, $phasePath, $projectPath, $scenarioInputFile, $agent)
 if (-not $isDevPhase) { $checkedInputPaths += @($rubric, $participant, $generalRubric) }
 if ($project['projectContractPath']) {
@@ -384,7 +401,6 @@ foreach ($relative in @($files | Sort-Object -Unique)) {
     Assert-ScenarioNoLinks $path
     $copiedFiles += $relative
 }
-if ($agentRelative -cnotin $copiedFiles) { throw 'Target Agent was excluded from project baseline.' }
 if ($project['projectContractPath'] -and $project.projectContractPath.Replace('\', '/') -notin $copiedFiles) {
     throw 'Project contract was excluded from the product baseline.'
 }
@@ -414,6 +430,17 @@ $modelsSummary = @{
     participant = $(if ($isDevPhase) { $null } else { $ParticipantModel })
     evaluator = $(if ($isDevPhase) { $null } else { $EvaluatorModel })
 }
+$effectiveEfforts = @{}
+$activeModels = @($TargetModels)
+if (-not $isDevPhase) { $activeModels += @($ParticipantModel, $EvaluatorModel) }
+if ($WithTest) { $activeModels += $TestModels }
+foreach ($model in $activeModels) {
+    $effectiveEfforts[$model] = Get-ModelReasoningEffort $model $ReasoningEffort $effortOverrides
+}
+$participantEffort = if ($isDevPhase) { $null } elseif ($ParticipantReasoningEffort) { $ParticipantReasoningEffort }
+    else { Get-ModelReasoningEffort $ParticipantModel $ReasoningEffort $effortOverrides }
+$evaluatorEffort = if ($isDevPhase) { $null } elseif ($EvaluatorReasoningEffort) { $EvaluatorReasoningEffort }
+    else { Get-ModelReasoningEffort $EvaluatorModel $ReasoningEffort $effortOverrides }
 $plan = @{
     caseId = $manifest.caseId
     stage = $phase.stage
@@ -425,8 +452,12 @@ $plan = @{
     }
     sourceRepository = $source
     targetAgent = $phase.targetAgent
+    targetAgentFile = $agent
     models = $modelsSummary
-    requestedReasoningEffort = $(if ($ReasoningEffort) { $ReasoningEffort } else { $null })
+    requestedReasoningEffort = $ReasoningEffort
+    modelReasoningEfforts = $effectiveEfforts
+    targetConditions = $resolvedTargetConditions
+    roleReasoningEfforts = @{ participant = $participantEffort; evaluator = $evaluatorEffort }
     designFile = $(if ($isDevPhase) { $scenarioInputFile } else { $null })
     requirementFile = $(if ($isDevPhase) { $referenceRequirementFile } elseif ($isDesignPhase) { $scenarioInputFile } else { $null })
     knowledgeFile = $(if ($isDesignPhase -or $isDevPhase) { $null } else { $scenarioInputFile })
@@ -484,6 +515,10 @@ try {
         Copy-Item -LiteralPath (Join-Path $source $relative) -Destination $destination
         $baselineHashes[$relative] = (Get-FileHash -LiteralPath $destination).Hash
     }
+    $agentDestination = Join-Path $staging $agentRelative
+    [void](New-Item -ItemType Directory -Path (Split-Path $agentDestination) -Force)
+    Copy-Item -LiteralPath (Join-Path $tempInputs 'target.agent.md') -Destination $agentDestination -Force
+    $baselineHashes[$agentRelative] = (Get-FileHash -LiteralPath $agentDestination).Hash
     if ($isDesignPhase -or $isDevPhase) {
         $reqDestination = Join-Path $staging $requirementWorkspacePath
         if ((Test-Path $reqDestination) -and (Get-FileHash $reqDestination).Hash -cne (Get-FileHash (Join-Path $tempInputs 'requirement.md')).Hash) { throw 'Requirement destination collision.' }
@@ -506,7 +541,8 @@ try {
         $plan['inputHashes'] = $hashes
         $devComparison = & (Join-Path $PSScriptRoot 'Invoke-DevRun.ps1') -Plan $plan -Phase $phase -Project $project `
             -Verification $devVerification -SourceRepository $staging -InputsDirectory $tempInputs `
-            -TargetModels $TargetModels -ReasoningEffort $ReasoningEffort -CliPath $CliPath -UseGitHubCliAuth:$effectiveUseGitHubCliAuth
+            @targetArguments -ReasoningEffort $ReasoningEffort -ModelReasoningEfforts $ModelReasoningEfforts `
+            -CliPath $CliPath -UseGitHubCliAuth:$effectiveUseGitHubCliAuth
         $devComparison
         if ($WithTest) {
             $pipeline = @{ schemaVersion = 1; stage = 'dev-test'; devRun = $root; devPassed = $devComparison.passed
@@ -518,6 +554,7 @@ try {
                 try {
                     $testComparison = & (Join-Path $PSScriptRoot 'Invoke-TestRun.ps1') -DevRunDirectory $root `
                         -TestModels $TestModels -RunDirectory $testRoot -Mode Run -CliPath $CliPath `
+                        -ReasoningEffort $ReasoningEffort -ModelReasoningEfforts $ModelReasoningEfforts `
                         -ProfileFile $TestProfileFile -UseGitHubCliAuth:$effectiveUseGitHubCliAuth
                     $pipeline.testState = $testComparison.state
                 } catch {
@@ -537,6 +574,7 @@ try {
         caseId = $manifest.caseId
         repositoryPath = $staging; runDirectory = $root
         targetAgent = $phase.targetAgent; targetModel = $TargetModels[0]; participantModel = $ParticipantModel
+        targetAgentFile = (Join-Path $tempInputs 'target.agent.md')
         participantInput = $phase.participantInput
         protectedWorkspacePaths = @($instructionFiles)
         participantAgentFile = (Join-Path $tempInputs 'participant.agent.md'); knowledgeFile = (Join-Path $tempInputs $inputSnapshotName)
@@ -550,7 +588,8 @@ try {
     $plan['inputHashes'] = $hashes; $plan['baselineHashes'] = $baselineHashes; $plan['modelCallsStarted'] = $true
     $plan | ConvertTo-Json -Depth 20 | Set-Content (Join-Path $tempInputs 'manifest.json') -Encoding utf8
     & (Join-Path $PSScriptRoot 'Invoke-AgentDialogueComparison.ps1') -SourceRepository $staging -RunDirectory $root `
-        -TemplateFile $configPath -ParticipantModel $ParticipantModel -TargetModels $TargetModels `
+        -TemplateFile $configPath -ParticipantModel $ParticipantModel -ParticipantReasoningEffort $participantEffort @targetArguments `
+        -ReasoningEffort $ReasoningEffort -ModelReasoningEfforts $ModelReasoningEfforts `
         -CliPath $CliPath -UseGitHubCliAuth:$effectiveUseGitHubCliAuth
     foreach ($name in $hashes.Keys) {
         if ((Get-FileHash (Join-Path $tempInputs $name)).Hash -cne $hashes[$name]) { throw "Frozen input changed: $name" }
@@ -573,6 +612,7 @@ try {
     if (-not $DialogueOnly) {
         $evalParams = @{
             RunDirectory = $root; Model = $EvaluatorModel
+            ReasoningEffort = $evaluatorEffort
             RubricFile = (Join-Path $inputs 'general-rubric.json')
             DomainRubricFile = (Join-Path $inputs 'domain-rubric.json')
             GeneralRubricWeight = $rubricWeights.general

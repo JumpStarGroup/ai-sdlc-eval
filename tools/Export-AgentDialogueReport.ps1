@@ -167,6 +167,7 @@ foreach ($turn in $state.turns) {
     if ($null -eq $turnDurationMs) { $report.roleDurationMs[$turn.role] = $null }
     elseif ($null -ne $report.roleDurationMs[$turn.role]) { $report.roleDurationMs[$turn.role] += [long]$turnDurationMs }
     $execution = @{ call = $turn.call; role = $turn.role; requestedModel = $requestedModel; observedModels = @($observedModels)
+        requestedReasoningEffort = $(if ($meta) { $meta['reasoningEffort'] } else { $turn['requestedReasoningEffort'] })
         fusionPhases = $(if ($turn['fusionPhases']) { $turn.fusionPhases } elseif ($runtime) { $runtime['fusionPhases'] } else { $null })
         durationMs = $turnDurationMs
         modelEvidence = $(if ($observedModels.Count) { 'observed' } else { 'unavailable' })

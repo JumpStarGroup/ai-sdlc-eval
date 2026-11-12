@@ -14,8 +14,8 @@
 ## 运行
 
 准备 PowerShell 7、Git、Copilot CLI、可用模型及认证。继承 CLI 支持的 token 或使用现有认证回退；
-脚本不登录、不输出凭据。被测 Agent 必须已存在于产品工作区的 `.github/agents/<name>.agent.md`。
-统一入口根据场景和阶段 Profile 生成对话配置，复制产品基线并为每个候选模型准备独立工作区。
+脚本不登录、不输出凭据。统一入口从阶段 Profile 的 `targetAgentFile` 加载框架角色，
+复制产品基线并在每个独立副本中安装所选定义，不要求产品源仓库预装角色。
 
 ```powershell
 pwsh -NoProfile -File .\tools\Invoke-SDLC-Eval.ps1 `
@@ -26,10 +26,12 @@ pwsh -NoProfile -File .\tools\Invoke-SDLC-Eval.ps1 `
 预检不调用模型；改为 `-Mode Run` 才会真实执行并产生费用。
 Req/Design 默认每个模型条件双方合计最多十次对话调用，不是十轮；独立评分调用另计。
 源知识自身的冲突仍需修订，控制器不会替知识选边。
-阶段工具和政策以 [PM Profile](../../profiles/pm-clarification.json) 或
-[Architect Profile](../../profiles/architect-design.json) 为准；场景可指定自定义完整 Profile。
-运行时生成的对话配置会覆盖底层 [dialogue-policy.json](../../profiles/dialogue-policy.json) 默认值。
-修改底层默认值不会改变统一入口传入的完整阶段政策。
+阶段工具和政策以 [PM Profile](../../profiles/stages/pm-clarification.json) 或
+[Architect Profile](../../profiles/stages/architect-design.json) 为准；场景可指定自定义完整 Profile。
+运行时生成的对话配置会覆盖底层 [dialogue-policy.json](../../profiles/policies/dialogue-policy.json) 默认值。
+控制器仍始终读取此文件，并用其中的字段集合拒绝未知政策；它不是已经停用的历史配置。
+Req/Design 都使用该控制器，Dev/Test 不使用。日常修改应针对各自阶段 Profile 的完整政策，
+而不是底层默认值；修改底层默认值不会改变统一入口传入的完整阶段政策。
 关闭 skipIssueRegistration 只恢复角色原有流程，不自动提供 MCP 或远程权限；工具开关与流程开关相互独立。
 
 ### 模型比较与底层兼容
@@ -42,9 +44,25 @@ Req/Design 默认每个模型条件双方合计最多十次对话调用，不是
 底层比较工具的 `-TemplateFile` 和 [单次对话工具](../../tools/Invoke-AgentDialogue.ps1)的
 `-ConfigFile` 仍可用于兼容和专项诊断，但不应作为新的并行业务配置来源；
 直接调用单次对话工具允许被测角色在配置的工作区生成文件，不会自行复制产品仓库。
+直接比较工具接受模板中的 `targetAgentFile`，相对于模板解析并冻结到比较基线；
+旧模板未指定时仍读取产品角色。单次控制器操作的是已准备的工作区，要求其中已安装角色。
+统一入口和比较工具支持 `-TargetConditions` JSON 数组，在同批为相同模型指定不同 effort；
+不与显式 `-TargetModels` 混用。具体模型的默认 effort 为 `medium`，`-ModelReasoningEfforts` 按模型覆盖，
+而条件 `reasoningEffort` 与角色 `-ParticipantReasoningEffort` / `-EvaluatorReasoningEffort` 的优先级更高。
+比较工具接收参与者覆盖，统一入口另向独立评分者传入评价者覆盖，不继承被测条件的 effort。
+控制器配置分别记录 `targetReasoningEffort`、`participantReasoningEffort`，非空值逐轮传入 CLI。
+Fusion/Auto 等路由模型默认记录 null 且不传 `--reasoning-effort`；路由档位与模型 effort 是两回事。
 
-UseGitHubCliAuth 仅在进程内暂时移除 token 覆盖变量，使用已有认证回退，结束后恢复；
-不读取、显示或存储凭据。统一入口不传 `-RunDirectory` 时，由
+统一入口默认启用 `UseGitHubCliAuth`；底层比较和评价工具会临时移除
+`COPILOT_GITHUB_TOKEN`、`GH_TOKEN`、`GITHUB_TOKEN`，尝试已有认证回退，结束后恢复变量；
+不输出或持久化凭据。若需继承当前终端的认证变量，显式传 `-UseGitHubCliAuth:$false`。
+普通 `copilot` 在不同工作目录下仍使用同一个用户配置目录，但框架为角色设置独立
+`COPILOT_HOME`，因此普通 CLI 的 `/user list` 成功不代表框架子进程能取得相同认证。
+该开关不是登录操作，`gh auth login` 也不是运行框架的必需步骤。
+认证失败时对比冻结输入中的 `useGitHubCliAuth` 和采集目录中的 `events.stderr`；
+不要仅凭模型参数预检通过就认定认证通过。
+
+统一入口不传 `-RunDirectory` 时，由
 [批次命名模块](../../tools/RunDirectory.psm1)自动生成阶段批次名。
 底层比较工具单独调用时的命名格式为
 `<caseId>-dialogue-<三位序号>-<UTC日期>-<RunLabel>`，例如

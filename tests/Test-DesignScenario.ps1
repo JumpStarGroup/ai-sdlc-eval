@@ -17,8 +17,9 @@ try {
     $source = Join-Path $fixture 'product'
     [void](New-Item -ItemType Directory -Path (Join-Path $source '.github/agents') -Force)
     [void](New-Item -ItemType Directory -Path (Join-Path $source 'docs') -Force)
-    "---`nname: fixture-architect`ntools: [read/readFile, edit]`n---`nDesign only." | Set-Content (Join-Path $source '.github/agents/fixture-architect.agent.md') -Encoding utf8
-    "---`nname: fixture-developer`ntools: [read/readFile, edit, execute/runInTerminal]`n---`nCode and test." | Set-Content (Join-Path $source '.github/agents/fixture-developer.agent.md') -Encoding utf8
+    [void](New-Item -ItemType Directory -Path (Join-Path $fixture 'agents') -Force)
+    "---`nname: fixture-architect`ntools: [read/readFile, edit]`n---`nDesign only." | Set-Content (Join-Path $fixture 'agents\fixture-architect.agent.md') -Encoding utf8
+    "---`nname: fixture-developer`ntools: [read/readFile, edit, execute/runInTerminal]`n---`nCode and test." | Set-Content (Join-Path $fixture 'agents\fixture-developer.agent.md') -Encoding utf8
     'PROJECT_RULE_ONLY' | Set-Content (Join-Path $source '.github/copilot-instructions.md') -Encoding utf8
     'EXCLUDED_PRIVATE_INPUT' | Set-Content (Join-Path $source 'docs/fixture.simple-knowledge.md') -Encoding utf8
     [void](New-Item -ItemType Directory -Path (Join-Path $source 'tests') -Force)
@@ -37,16 +38,18 @@ try {
         criteria = @(@{ id = 'design_scope'; title = 'Design scope'; weight = 100; description = 'PRIVATE_DOMAIN_SCORE' }) }
     $rubricPath = Join-Path $fixture 'rubric.json'
     $rubric | ConvertTo-Json -Depth 10 | Set-Content $rubricPath -Encoding utf8
-    $phase = Get-Content (Join-Path $framework 'profiles/architect-design.json') -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+    $phase = Get-Content (Join-Path $framework 'profiles\stages\architect-design.json') -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
     $phase.targetAgent = 'fixture-architect'
+    $phase.targetAgentFile = 'agents\fixture-architect.agent.md'
     $phase.participantAgentFile = Join-Path $framework 'agents/simple-business-user.agent.md'
-    $phase.generalRubricFile = Join-Path $framework 'profiles/result-quality.json'
+    $phase.generalRubricFile = Join-Path $framework 'profiles\rubrics\result-quality.json'
     $phase.policy.callLimit = 7
     $phase.policy.interactionPrompt = 'DESIGN_PROFILE_INTERACTION'
     $phasePath = Join-Path $fixture 'phase.json'
     $phase | ConvertTo-Json -Depth 15 | Set-Content $phasePath -Encoding utf8
-    $devPhase = Get-Content (Join-Path $framework 'profiles/developer-coding.json') -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+    $devPhase = Get-Content (Join-Path $framework 'profiles\stages\developer-coding.json') -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
     $devPhase.targetAgent = 'fixture-developer'
+    $devPhase.targetAgentFile = 'agents\fixture-developer.agent.md'
     $devPhasePath = Join-Path $fixture 'dev-phase.json'
     $devPhase | ConvertTo-Json -Depth 15 | Set-Content $devPhasePath -Encoding utf8
     $runsRoot = Join-Path $fixture 'runs'
@@ -118,7 +121,7 @@ try {
         -not $devPlan.modelCallsStarted -and -not (Test-Path $devPlan.runDirectory)) 'Dev preflight needs no participant, evaluator or rubric.'
     $minimalTools = Join-Path $fixture 'minimal-framework\tools'
     [void](New-Item -ItemType Directory -Path $minimalTools -Force)
-    foreach ($tool in @('Invoke-SDLC-Eval.ps1', 'RunDirectory.psm1', 'DevExecution.psm1', 'DevDelivery.psm1', 'CapturedProcess.psm1', 'DialoguePolicy.psm1')) {
+    foreach ($tool in @('Invoke-SDLC-Eval.ps1', 'RunDirectory.psm1', 'EvaluationConfig.psm1', 'DevExecution.psm1', 'DevDelivery.psm1', 'CapturedProcess.psm1', 'DialoguePolicy.psm1')) {
         Copy-Item (Join-Path $framework "tools\$tool") $minimalTools
     }
     $independentDevPlan = & (Join-Path $minimalTools 'Invoke-SDLC-Eval.ps1') -ScenarioFile $manifestPath -Stage dev
@@ -152,6 +155,28 @@ try {
     $phase.stage = 'design'
     $phase | ConvertTo-Json -Depth 15 | Set-Content $phasePath -Encoding utf8
     $plan = & $runner -ScenarioFile $manifestPath -Stage design -TargetModels @('fixture-designer') -ParticipantModel 'fixture-participant' -EvaluatorModel 'fixture-evaluator'
+    Assert ($plan.modelReasoningEfforts['fixture-designer'] -ceq 'medium' -and
+        $plan.modelReasoningEfforts['fixture-participant'] -ceq 'medium' -and
+        $plan.modelReasoningEfforts['fixture-evaluator'] -ceq 'medium') 'Every model defaults to medium in preflight.'
+    foreach ($invalidEfforts in @('[]', '{"fixture-designer":"invalid"}', '{"fixture-designer":42}', '{"bad model":"high"}')) {
+        Assert-Rejected { & $runner -ScenarioFile $manifestPath -Stage design -ModelReasoningEfforts $invalidEfforts } '*ModelReasoningEfforts*'
+    }
+    foreach ($invalidConditions in @('[]', '{}', '[{"model":"fixture-designer","reasoningEffort":"invalid"}]',
+        '[{"model":"fixture-designer","reasoningEffort":null}]', '[{"model":"fixture-designer","extra":true}]',
+        '[{"reasoningEffort":"high"}]')) {
+        Assert-Rejected { & $runner -ScenarioFile $manifestPath -Stage design -TargetConditions $invalidConditions } '*TargetConditions*'
+    }
+    Assert-Rejected { & $runner -ScenarioFile $manifestPath -Stage design -TargetModels 'fixture-designer' `
+        -TargetConditions '[{"model":"fixture-designer"}]' } '*either TargetConditions or TargetModels*'
+    $originalAgentFile = $phase.targetAgentFile
+    $phase.targetAgentFile = 'agents\missing.agent.md'
+    $phase | ConvertTo-Json -Depth 15 | Set-Content $phasePath
+    Assert-Rejected { & $runner -ScenarioFile $manifestPath -Stage design } '*Missing target Agent file*'
+    $phase.targetAgentFile = $devPhase.targetAgentFile
+    $phase | ConvertTo-Json -Depth 15 | Set-Content $phasePath
+    Assert-Rejected { & $runner -ScenarioFile $manifestPath -Stage design } '*Agent name does not match targetAgent*'
+    $phase.targetAgentFile = $originalAgentFile
+    $phase | ConvertTo-Json -Depth 15 | Set-Content $phasePath
     Assert ($plan.participantInput -eq 'same-confirmed-requirement' -and $plan.minimumParticipantReplies -eq 0) 'Shared-input contract failed.'
     Assert ([IO.Path]::GetFileName($plan.runDirectory) -match '^uf01-design-001-\d{8}-fixture-designer-fixture-participant$') 'Automatic sequential run naming failed.'
     Assert ($plan.requirementWorkspacePath -eq 'docs/requirements/req-uf01.md' -and
@@ -169,6 +194,7 @@ try {
     $env:DIALOGUE_DESIGN_FIXTURE = 'shared-requirement'
     & $runner -ScenarioFile $manifestPath -Stage design -Mode Run -RunDirectory $run -TargetModels @('fusion:standard', 'fusion:high') `
         -ParticipantModel 'fixture-participant' -EvaluatorModel 'fixture-evaluator' `
+        -ModelReasoningEfforts '{"fusion:high":"high","fixture-participant":"low","fixture-evaluator":"max"}' `
         -CliPath (Join-Path $PSScriptRoot 'fixtures/fake-agent-dialogue.ps1') | Out-Null
     Assert (-not (Test-Path ($run + '-inputs'))) 'No sibling -inputs directory should be created.'
     $inputs = Join-Path $run 'inputs'
@@ -209,6 +235,17 @@ try {
     foreach ($fusionCondition in $comparison.conditions) {
         $fusionState = Get-Content (Join-Path $fusionCondition.runDirectory 'result.json') -Raw | ConvertFrom-Json -AsHashtable
         Assert ($fusionState.outcome -eq 'stage_completed') 'Design must accept routed concrete models for either Fusion tier.'
+        $expectedEffort = if ($fusionCondition.model -ceq 'fusion:high') { 'high' } else { $null }
+        Assert ($fusionCondition.requestedReasoningEffort -ceq $expectedEffort) 'Target model efforts must remain independent.'
+        foreach ($turn in $fusionState.turns) {
+            $meta = Get-Content (Join-Path $turn.capturePath 'turn.json') -Raw | ConvertFrom-Json -AsHashtable
+            $turnEffort = if ($turn.role -eq 'target') { $expectedEffort } else { 'low' }
+            $effortIndex = [array]::IndexOf($meta.command.arguments, '--reasoning-effort')
+            Assert ($meta.reasoningEffort -ceq $turnEffort) 'Each turn records the resolved model effort or routing default.'
+            if ($turnEffort) {
+                Assert ($effortIndex -ge 0 -and $meta.command.arguments[$effortIndex + 1] -ceq $turnEffort) 'Explicit target and participant efforts must reach the CLI.'
+            } else { Assert ($effortIndex -eq -1) 'Routed models must not receive an implicit reasoning-effort flag.' }
+        }
     }
     $condition = $comparison.conditions[0]
     $state = Get-Content (Join-Path $condition.runDirectory 'result.json') -Raw | ConvertFrom-Json -AsHashtable
@@ -219,6 +256,12 @@ try {
     Assert ($state.outcome -eq 'stage_completed' -and $state.participantReplies -eq 1 -and $state.pending.Count -eq 0) 'On-demand clarification should complete with one shared-input answer.'
     $evaluationRoot = Get-ChildItem $run -Directory -Filter 'evaluation-*' | Select-Object -First 1
     $evaluation = Get-Content (Join-Path $evaluationRoot.FullName 'evaluation.json') -Raw | ConvertFrom-Json -AsHashtable
+    $scored = Get-Content (Join-Path (Join-Path $evaluationRoot.FullName $condition.name) 'evaluation.json') -Raw | ConvertFrom-Json -AsHashtable
+    $evaluatorMeta = Get-Content (Join-Path $scored.evaluatorCapture 'turn.json') -Raw | ConvertFrom-Json -AsHashtable
+    Assert ($scored.requestedReasoningEffort -ceq 'max' -and $evaluatorMeta.reasoningEffort -ceq 'max') 'Evaluator effort must follow its own model override.'
+    Assert (-not (Test-Path (Join-Path $source '.github\agents\fixture-architect.agent.md')) -and
+        (Get-FileHash (Join-Path $run 'inputs\target.agent.md')).Hash -ceq
+        (Get-FileHash (Join-Path $fixture $phase.targetAgentFile)).Hash) 'External target roles must be frozen without installing them in the source product.'
     Assert ($evaluation.evaluatorModel -eq 'fixture-evaluator' -and $evaluation.results[0].status -eq 'completed' -and
         $evaluation.rubricWeights.general -eq 30 -and $evaluation.rubricWeights.domain -eq 70 -and
         $evaluation.results[0].targetAiCredits -eq '0.00') 'Explicit evaluator model, 30:70 rubric weights, and AI credit extraction failed.'
@@ -231,16 +274,15 @@ try {
     Assert ($package.referenceDocuments.Count -eq 2 -and $package.referenceDocuments[0].content.Contains('SHARED_CONFIRMED_REQUIREMENT')) 'Evaluator must receive separate requirement and discovered project instruction references.'
     Assert ($package.rubrics[1].criteria[0].description -ceq 'PRIVATE_DOMAIN_SCORE') 'Scenario rubric must remain unchanged.'
     Assert (-not $evaluationInput.Contains('EXCLUDED_PRIVATE_INPUT')) 'Excluded project knowledge must not leak to evaluation.'
-    "---`nname: SDLCRole_PM`n---`nProduce a requirement draft, not human approval." |
-        Set-Content (Join-Path $source '.github\agents\SDLCRole_PM.agent.md')
     'Project contract. Human approval remains pending.' | Set-Content (Join-Path $source 'docs\contract.md')
     $project.projectContractPath = 'docs/contract.md'
     $project | ConvertTo-Json -Depth 10 | Set-Content $projectPath
     $knowledge = Join-Path $fixture 'private-knowledge.md'
     "## 初始需求`nClarify this feature.`n## Private knowledge`nPRIVATE_REQ_KNOWLEDGE" | Set-Content $knowledge
-    $pmProfile = Get-Content (Join-Path $framework 'profiles\pm-clarification.json') -Raw | ConvertFrom-Json -AsHashtable
+    $pmProfile = Get-Content (Join-Path $framework 'profiles\stages\pm-clarification.json') -Raw | ConvertFrom-Json -AsHashtable
+    $pmProfile.targetAgentFile = Join-Path $framework 'agents\SDLCRole_PM.agent.md'
     $pmProfile.participantAgentFile = Join-Path $framework 'agents\simple-business-user.agent.md'
-    $pmProfile.generalRubricFile = Join-Path $framework 'profiles\result-quality.json'
+    $pmProfile.generalRubricFile = Join-Path $framework 'profiles\rubrics\result-quality.json'
     $pmProfile.availableTools = @('view', 'glob', 'apply_patch')
     $pmProfile.policy.callLimit = 7
     $pmProfile.policy.interactionPrompt = 'REQ_PROFILE_INTERACTION'
@@ -260,8 +302,10 @@ try {
     try {
         $env:PATH = $headlessDirectory + [IO.Path]::PathSeparator + $savedPath
         $env:APPDATA = $null
-        & $runner -ScenarioFile $manifestPath -Stage req -Mode Run -RunDirectory $reqRun -TargetModels 'fusion:standard' `
-            -ParticipantModel 'fixture-participant' -EvaluatorModel 'fixture-evaluator' | Out-Null
+        $matrix = '[{"model":"fusion:high"},{"model":"fusion:standard"},{"model":"gpt-6.1-sol","reasoningEffort":"medium"},{"model":"gpt-6.1-sol","reasoningEffort":"high"}]'
+        & $runner -ScenarioFile $manifestPath -Stage req -Mode Run -RunDirectory $reqRun -TargetConditions $matrix `
+            -ParticipantModel 'gpt-6.1-sol' -EvaluatorModel 'gpt-6.1-sol' -ReasoningEffort low `
+            -ModelReasoningEfforts '{"gpt-6.1-sol":"max"}' -ParticipantReasoningEffort high -EvaluatorReasoningEffort high | Out-Null
     } finally {
         $env:PATH = $savedPath
         $env:APPDATA = $savedAppData
@@ -271,6 +315,29 @@ try {
     $reqConfig = Get-Content (Join-Path $reqRun 'inputs\dialogue-config.json') -Raw | ConvertFrom-Json -AsHashtable
     $reqConditionConfig = Get-Content $reqComparison.conditions[0].configFile -Raw | ConvertFrom-Json -AsHashtable
     $reqManifest = Get-Content (Join-Path $reqRun 'inputs\manifest.json') -Raw | ConvertFrom-Json -AsHashtable
+    Assert ($reqComparison.conditions.Count -eq 4 -and @($reqComparison.conditions.name | Sort-Object -Unique).Count -eq 4 -and
+        $reqManifest.targetConditions[2].reasoningEffort -ceq 'medium' -and
+        $reqManifest.targetConditions[3].reasoningEffort -ceq 'high' -and
+        $reqManifest.roleReasoningEfforts.participant -ceq 'high' -and
+        $reqManifest.roleReasoningEfforts.evaluator -ceq 'high') 'Frozen inputs preserve four ordered conditions and independent role overrides, even when all explicit models have the same ID.'
+    for ($index = 0; $index -lt 4; $index++) {
+        $entry = $reqComparison.conditions[$index]
+        $matrixState = Get-Content (Join-Path $entry.runDirectory 'result.json') -Raw | ConvertFrom-Json -AsHashtable
+        $expectedEffort = @($null, $null, 'medium', 'high')[$index]
+        Assert ($matrixState.outcome -eq 'stage_completed' -and $entry.requestedReasoningEffort -ceq $expectedEffort) 'Every matrix condition must complete with its own effort.'
+        foreach ($turn in $matrixState.turns) {
+            $meta = Get-Content (Join-Path $turn.capturePath 'turn.json') -Raw | ConvertFrom-Json -AsHashtable
+            $expectedTurnEffort = if ($turn.role -eq 'participant') { 'high' } else { $expectedEffort }
+            $effortIndex = [array]::IndexOf($meta.command.arguments, '--reasoning-effort')
+            Assert ($meta.reasoningEffort -ceq $expectedTurnEffort) 'Target condition and participant role efforts must override model/global defaults independently.'
+            if ($expectedTurnEffort) {
+                Assert ($effortIndex -ge 0 -and $meta.command.arguments[$effortIndex + 1] -ceq $expectedTurnEffort) 'Matrix effort must reach the actual CLI arguments.'
+            } else {
+                $routing = if ($index -eq 0) { 'hydrafusion' } else { 'balance' }
+                Assert ($effortIndex -eq -1 -and $meta.requestedAutoTier -ceq $routing) 'Fusion tier selects routing without injecting a reasoning effort.'
+            }
+        }
+    }
     Assert ($reqManifest.cliPath -ceq $headlessCli) 'A full Req run must use the PATH CLI without an editor environment.'
     Assert ($reqResult.outcome -eq 'stage_completed' -and $reqResult.participantReplies -eq 2 -and
         $reqConfig.targetAgent -eq 'SDLCRole_PM' -and 'docs/contract.md' -in $reqConfig.protectedWorkspacePaths) "New PM must complete a private-knowledge dialogue with protected contract and two simulated answers: $($reqResult.outcome), replies=$($reqResult.participantReplies), error=$($reqResult['error'])"
@@ -291,6 +358,12 @@ try {
     $reqEvaluationRoot = Get-ChildItem $reqRun -Directory -Filter 'evaluation-*' | Select-Object -First 1
     $reqEvaluation = Get-Content (Join-Path $reqEvaluationRoot.FullName 'evaluation.json') -Raw | ConvertFrom-Json -AsHashtable
     Assert ($reqEvaluation.results[0].status -eq 'completed') 'The new PM draft must reach independent evaluation.'
+    foreach ($entry in $reqComparison.conditions) {
+        $scored = Get-Content (Join-Path $reqEvaluationRoot.FullName "$($entry.name)\evaluation.json") -Raw | ConvertFrom-Json -AsHashtable
+        $meta = Get-Content (Join-Path $scored.evaluatorCapture 'turn.json') -Raw | ConvertFrom-Json -AsHashtable
+        Assert ($scored.evaluatorModel -ceq 'gpt-6.1-sol' -and $scored.requestedReasoningEffort -ceq 'high' -and
+            $meta.reasoningEffort -ceq 'high') 'Every condition is evaluated with the fixed evaluator role effort, not its target effort.'
+    }
     $pmProfile.policy.callLimit = 4
     $pmProfile | ConvertTo-Json -Depth 15 | Set-Content $pmProfilePath
     $limitedRun = Join-Path $fixture 'req-limited'
@@ -319,19 +392,17 @@ try {
         $pmPlan = & $runner -ScenarioFile $manifestPath -Stage req
         Assert ($pmPlan.stage -eq 'req' -and $pmPlan.targetAgent -eq 'SDLCRole_PM' -and
             $pmPlan.participantInput -eq 'private-knowledge' -and $pmPlan.minimumParticipantReplies -eq 2 -and
-            $pmPlan.layers.infrastructurePhaseProfile -ceq (Join-Path $framework 'profiles\pm-clarification.json') -and
+            $pmPlan.layers.infrastructurePhaseProfile -ceq (Join-Path $framework 'profiles\stages\pm-clarification.json') -and
             -not [string]::IsNullOrWhiteSpace($pmPlan.initialRequest)) "Unified req layered scenario validation failed: $caseId"
     }
     $designPlan = & $runner -ScenarioFile $manifestPath -Stage design
     Assert ($designPlan.stage -eq 'design' -and $designPlan.targetAgent -eq 'fixture-architect' -and
         $designPlan.participantInput -eq 'same-confirmed-requirement' -and $designPlan.minimumParticipantReplies -eq 0) 'Synthetic design stage validation failed.'
-    "---`nname: SDLCRole_Architect`n---`nProduce a design draft." |
-        Set-Content (Join-Path $source '.github\agents\SDLCRole_Architect.agent.md')
     [void]$manifest.stages.design.Remove('phaseProfile')
     $manifest | ConvertTo-Json -Depth 12 | Set-Content $manifestPath
     $defaultDesignPlan = & $runner -ScenarioFile $manifestPath -Stage design
     Assert ($defaultDesignPlan.targetAgent -eq 'SDLCRole_Architect' -and
-        $defaultDesignPlan.layers.infrastructurePhaseProfile -ceq (Join-Path $framework 'profiles\architect-design.json')) 'Design uses its framework Profile when the scenario does not override it.'
+        $defaultDesignPlan.layers.infrastructurePhaseProfile -ceq (Join-Path $framework 'profiles\stages\architect-design.json')) 'Design uses its framework Profile when the scenario does not override it.'
     $devPlan = & $runner -ScenarioFile $manifestPath -Stage dev -TargetModels 'auto, hydrafusion'
     Assert ($devPlan.executor -eq 'single-shot-dev-v1' -and $null -eq $devPlan.models.evaluator -and
         -not $devPlan.initialRequest.Contains('DIALOGUE_CONTROL')) 'Dev plan must use independent execution and test-based evaluation.'
@@ -342,6 +413,11 @@ try {
         $devPlan.requirementWorkspacePath -eq 'docs/requirements/req-sample-two.md' -and
         [IO.Path]::GetFileName($devPlan.runDirectory) -match '^sample-two-dev-\d{3}-\d{8}-auto-hydrafusion$') 'Synthetic dev stage validation failed.'
     Assert ($pmPlan.projectContractPath -in $pmPlan.instructionFiles -and $devPlan.initialRequest.Contains('维护并运行受影响前端单元测试')) 'New roles must discover a protected contract and retain frontend unit-test responsibility.'
+    [void]$manifest.stages.dev.Remove('phaseProfile')
+    $manifest | ConvertTo-Json -Depth 12 | Set-Content $manifestPath
+    $defaultDevPlan = & $runner -ScenarioFile $manifestPath -Stage dev
+    Assert ($defaultDevPlan.targetAgentFile -ceq (Join-Path $framework 'agents\SDLCRole_Dev.agent.md') -and
+        @(Get-ChildItem (Join-Path $source '.github\agents') -File).Count -eq 0) 'All default target roles must work without product agent definitions.'
     $exampleRoot = Join-Path $fixture 'example-config'
     Copy-Item -LiteralPath (Join-Path $framework 'examples') -Destination $exampleRoot -Recurse
     $exampleProjectPath = Join-Path $exampleRoot 'project.json'

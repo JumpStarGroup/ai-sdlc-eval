@@ -244,7 +244,7 @@ if ($comparison) {
         originalOutcome = $comparison.state; reverificationDirectories = $offlinePaths; usage = $totalUsage
         timing = @{ startedAt = $comparison['startedAt']; finishedAt = $comparison['finishedAt']; durationSeconds = (Span $comparison['startedAt'] $comparison['finishedAt']) }
         conditions = @($children | ForEach-Object { @{
-            name = $_.name; model = $_.model; requestedFusionTier = $_.requestedFusionTier
+            name = $_.name; model = $_.model; requestedReasoningEffort = $_.requestedReasoningEffort; requestedFusionTier = $_.requestedFusionTier
             requestedAutoTier = $_.requestedAutoTier; observedModels = $_.observedModels
             report = (Join-Path $_.directory 'report.json'); status = $_.status; usage = $_.usage
             outcome = $_.outcome; warnings = $_.warnings
@@ -313,6 +313,7 @@ $captureSeconds = if ($turnMeta -and $lastMeta -and $turnMeta['startedAt'] -and 
 $report = @{
     schemaVersion = 1; stage = 'dev'; generatedAt = [DateTimeOffset]::UtcNow.ToString('o')
     name = (Split-Path $conditionRoot -Leaf); directory = $root; model = $result['model']; observedModels = @($result['observedModels'])
+    requestedReasoningEffort = $result['requestedReasoningEffort']
     requestedFusionTier = $(if ($turnMeta) { $turnMeta['requestedFusionTier'] } else { $null })
     requestedAutoTier = $(if ($turnMeta) { $turnMeta['requestedAutoTier'] } else { $null })
     effectiveCliModel = $(if ($turnMeta) { $turnMeta['effectiveCliModel'] } else { $null })
@@ -345,6 +346,7 @@ $lines.Add('| Item | Value |'); $lines.Add('| --- | --- |')
 foreach ($pair in @(
     @('Case / stage', "$($report.caseId) / Dev"), @('Agent', $report.agent),
     @('Requested / actual model', "$($report.model) / $($report.observedModels -join ', ')"),
+    @('Requested reasoning effort', $report.requestedReasoningEffort),
     @('Requested Fusion tier / routing profile', "$($report.requestedFusionTier) / $($report.requestedAutoTier)"),
     @('CLI model selector', $report.effectiveCliModel),
     @('CLI version', $report.cliVersion), @('Original outcome', $report.outcome),

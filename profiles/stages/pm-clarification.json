@@ -1,11 +1,12 @@
 {
   "schemaVersion": 1,
   "id": "pm-clarification-local",
-  "version": "2",
+  "version": "3",
   "stage": "req",
   "targetAgent": "SDLCRole_PM",
-  "participantAgentFile": "../agents/simple-business-user.agent.md",
-  "generalRubricFile": "result-quality.json",
+  "targetAgentFile": "../../agents/SDLCRole_PM.agent.md",
+  "participantAgentFile": "../../agents/simple-business-user.agent.md",
+  "generalRubricFile": "../rubrics/result-quality.json",
   "rubricWeights": {
     "general": 30,
     "domain": 70

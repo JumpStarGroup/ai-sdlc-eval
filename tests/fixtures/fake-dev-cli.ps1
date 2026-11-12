@@ -4,7 +4,6 @@ if ($args -contains '--no-remote' -or $args -contains '--no-remote-export' -or $
 $ErrorActionPreference = 'Stop'
 $prompt = [Console]::In.ReadToEnd()
 if ($args[$([Array]::IndexOf($args, '--agent') + 1)] -in @('eval-backend-tester', 'SDLCRole_Test')) {
-    if ($args -contains '--reasoning-effort') { throw 'Dev reasoning effort must not leak into the Test stage.' }
     $prompt | & (Join-Path $PSHOME 'pwsh.exe') -NoProfile -File (Join-Path $PSScriptRoot 'fake-test-cli.ps1') @args
     exit $LASTEXITCODE
 }
@@ -24,8 +23,11 @@ if ($mode -eq 'reasoning-max') {
     if ($effortIndex -lt 0 -or $args[$effortIndex + 1] -cne 'max') {
         throw 'Explicit Dev reasoning effort must reach the CLI unchanged.'
     }
-} elseif ($args -contains '--reasoning-effort') {
-    throw 'Default Dev runs must not override CLI reasoning effort.'
+} else {
+    $effortIndex = [Array]::IndexOf($args, '--reasoning-effort')
+    $expectedEffort = if ($mode -eq 'success' -and $model -eq 'fixture-other') { 'high' } else { 'medium' }
+    if ($mode -eq 'condition-matrix' -and $effortIndex -ge 0 -and $args[$effortIndex + 1] -eq 'high') { $expectedEffort = 'high' }
+    if ($effortIndex -lt 0 -or $args[$effortIndex + 1] -cne $expectedEffort) { throw 'Default and per-model Dev effort must reach the CLI.' }
 }
 if ($args -contains '--resume' -or $prompt.Contains('DIALOGUE_CONTROL')) { throw 'Dev must be a single invocation without dialogue protocol.' }
 if (-not $env:TEMP.StartsWith($workspace + [IO.Path]::DirectorySeparatorChar)) { throw 'Temp must be inside this product workspace.' }

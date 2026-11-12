@@ -4,10 +4,12 @@ param(
     [Parameter(Mandatory)][string]$DevRunDirectory,
     [string[]]$DevConditions = @(),
     [string[]]$TestModels = @('gpt-6.1-sol'),
+    [ValidateSet('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')][string]$ReasoningEffort = 'medium',
+    [string]$ModelReasoningEfforts = '{}',
     [string]$RunDirectory,
     [ValidateSet('ValidateOnly', 'Validate', 'Run')][string]$Mode = 'ValidateOnly',
     [string]$CliPath = 'copilot',
-    [string]$ProfileFile = (Join-Path $PSScriptRoot '..\profiles\backend-testing.json'),
+    [string]$ProfileFile = (Join-Path $PSScriptRoot '..\profiles\stages\backend-testing.json'),
     [string]$ProjectFile,
     [switch]$UseGitHubCliAuth
 )
@@ -15,6 +17,8 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 Import-Module (Join-Path $PSScriptRoot 'DevDelivery.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'DevExecution.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'EvaluationConfig.psm1') -Force
+$effortOverrides = Read-ModelReasoningEfforts $ModelReasoningEfforts
 function Read-Json([string]$Path) { Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -AsHashtable }
 function Write-Json([string]$Path, $Value) { $Value | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath $Path -Encoding utf8 }
 function Progress([string]$Phase, [string]$Message) {
@@ -24,10 +28,10 @@ function Progress([string]$Phase, [string]$Message) {
 function Save-Comparison {
     Write-Json (Join-Path $root 'comparison.json') $comparison
     $lines = @('# Backend Test comparison', '', 'Web testing: not_implemented. Full QA: not completed.', '',
-        '| Dev condition | Test model | Outcome | Before / after | AIC | Report |',
-        '| --- | --- | --- | --- | --- | --- |')
+        '| Dev condition | Test model | Effort | Outcome | Before / after | AIC | Report |',
+        '| --- | --- | --- | --- | --- | --- | --- |')
     foreach ($item in $comparison.conditions) {
-        $lines += "| $($item.devCondition) | $($item.model) | $($item.state) | $($item['beforePassed']) / $($item['afterPassed']) | $($item['aiCredits']) | [Report](./$($item.name)/test/summary.md) |"
+        $lines += "| $($item.devCondition) | $($item.model) | $($item.requestedReasoningEffort) | $($item.state) | $($item['beforePassed']) / $($item['afterPassed']) | $($item['aiCredits']) | [Report](./$($item.name)/test/summary.md) |"
     }
     $lines | Set-Content -LiteralPath (Join-Path $root 'summary.md') -Encoding utf8
 }
@@ -41,6 +45,8 @@ foreach ($model in $TestModels) {
     if ($model -notmatch '^[a-zA-Z0-9][a-zA-Z0-9_.:-]*$' -or ($model -imatch '^fusion:' -and $model -inotmatch '^fusion:(standard|high|max)$')) {
         throw "Invalid Test model: $model"
     }
+    $effectiveEfforts = @{}
+    foreach ($model in $TestModels) { $effectiveEfforts[$model] = Get-ModelReasoningEffort $model $ReasoningEffort $effortOverrides }
 }
 foreach ($name in $DevConditions) { if ($name -notin @($dev.conditions.name)) { throw "Unknown Dev condition: $name" } }
 $selected = @($dev.conditions | Where-Object { -not $DevConditions.Count -or $_.name -in $DevConditions })
@@ -88,6 +94,7 @@ foreach ($condition in $selected) {
 }
 if ($Mode -ne 'Run') {
     [pscustomobject]@{ stage = 'test'; devConditions = @($sources.name); testModels = $TestModels
+        requestedReasoningEffort = $ReasoningEffort; modelReasoningEfforts = $effectiveEfforts
         targetAgent = $profile.targetAgent; agentFile = $agentFile; backendTestAccess = $resolvedProfile.backendTestAccess
         reportWorkspacePath = $profile['reportWorkspacePath']; projectContractPath = $profile['projectContractPath']
         runDirectory = $root; modelCallsStarted = $false; webTesting = 'not_implemented'; fullQaCompleted = $false }
@@ -102,10 +109,11 @@ Copy-Item -LiteralPath $agentFile -Destination (Join-Path $inputs 'tester.agent.
 if ($resolvedProfile.contractFile) {
     Copy-Item -LiteralPath $resolvedProfile.contractFile -Destination (Join-Path $inputs 'project-contract.md')
 }
-foreach ($name in @('Invoke-TestRun.ps1', 'DevDelivery.psm1', 'DevExecution.psm1', 'DialoguePolicy.psm1', 'CapturedProcess.psm1', 'Invoke-SdlcCapture.ps1')) {
+foreach ($name in @('Invoke-TestRun.ps1', 'DevDelivery.psm1', 'DevExecution.psm1', 'EvaluationConfig.psm1', 'DialoguePolicy.psm1', 'CapturedProcess.psm1', 'Invoke-SdlcCapture.ps1')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination $inputs
 }
 $comparison = @{ schemaVersion = 1; stage = 'test'; sourceDevRun = $sourceRoot; startedAt = [DateTimeOffset]::UtcNow.ToString('o')
+    requestedReasoningEffort = $ReasoningEffort; modelReasoningEfforts = $effectiveEfforts
     targetAgent = $profile.targetAgent; backendTestAccess = $resolvedProfile.backendTestAccess
     agentSha256 = (Get-FileHash -LiteralPath (Join-Path $inputs 'tester.agent.md')).Hash
     state = 'running'; passed = $false; webTesting = 'not_implemented'; fullQaCompleted = $false; conditions = @() }
@@ -134,13 +142,15 @@ try {
             $workspace = Join-Path $conditionRoot 'product'
             $resultDirectory = Join-Path $conditionRoot 'test'
             [void](New-Item -ItemType Directory -Path $resultDirectory -Force)
-            $entry = @{ name = $name; devCondition = $source.name; model = $model; state = 'preparing'; runDirectory = $resultDirectory }
+            $entry = @{ name = $name; devCondition = $source.name; model = $model; requestedReasoningEffort = $effectiveEfforts[$model]
+                state = 'preparing'; runDirectory = $resultDirectory }
             $comparison.conditions += $entry
             Save-Comparison
             $sourceBefore = Get-DevHashes (Join-Path $source.condition 'product') @($manifest.runtimeDirectories)
             $reportRelative = if ($profile['reportWorkspacePath']) { $profile.reportWorkspacePath.Replace('{caseId}', $manifest.caseId).Replace('\', '/') } else { $null }
             if ($reportRelative) { Assert-DevRelativePath $reportRelative }
             $result = @{ schemaVersion = 1; stage = 'test'; outcome = 'starting'; model = $model; calls = 0
+                requestedReasoningEffort = $entry.requestedReasoningEffort
                 targetAgent = $profile.targetAgent; backendTestAccess = $resolvedProfile.backendTestAccess
                 reportWorkspacePath = $reportRelative; agentSha256 = $comparison.agentSha256
                 startedAt = [DateTimeOffset]::UtcNow.ToString('o'); deliveryId = $manifest.id; deliveryManifestSha256 = $deliveryHash
@@ -232,8 +242,10 @@ Write the review and report even when blocked or tests fail, distinguish test de
                 $capture = Join-Path $resultDirectory 'capture'
                 $tools = @('view', 'glob', 'grep', 'apply_patch', 'create', 'edit') +
                     $(if ($IsWindows) { @('powershell', 'read_powershell', 'stop_powershell', 'list_powershell') } else { @('bash', 'read_bash', 'stop_bash', 'list_bash') })
+                $effortArguments = if ($entry.requestedReasoningEffort) { @{ ReasoningEffort = $entry.requestedReasoningEffort } } else { @{} }
                 & (Join-Path $inputs 'Invoke-SdlcCapture.ps1') -RepositoryPath $workspace -PromptFile $promptFile -RunDirectory $capture `
                     -Agent $profile.targetAgent -Model $model -CliPath $CliPath -AvailableTool $tools -AllowTool @('write', 'shell') `
+                    @effortArguments `
                     -CopilotHome (Join-Path $conditionRoot 'target-home') -DisableBuiltinMcps -TimeoutSeconds $profile.timeoutSeconds -ProcessEnvironment $environment | Out-Host
                 $exitCode = $LASTEXITCODE
                 $turns = @(Get-ChildItem -LiteralPath $capture -Directory -Filter 'turn-*')

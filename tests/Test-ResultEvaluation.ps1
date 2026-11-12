@@ -47,7 +47,7 @@ try {
             turns = $turns
         }
         $config = @{ targetAgent = 'fixture-target'; targetModel = $name; participantModel = 'fixture-participant' }
-        $report = @{ actualModels = @{ target = @($name) } }
+        $report = @{ actualModels = @{ target = @($name) }; usage = @{ target = @{ aiCredits = 1.25 } } }
         $state | ConvertTo-Json -Depth 15 | Set-Content (Join-Path $runDirectory 'result.json') -Encoding utf8
         $config | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $runDirectory 'config.json') -Encoding utf8
         $report | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $runDirectory 'report.json') -Encoding utf8
@@ -70,7 +70,7 @@ try {
             @{ id = 'sample_failures'; title = 'Failures'; weight = 20; description = 'Synthetic failures are considered.' },
             @{ id = 'sample_boundaries'; title = 'Boundaries'; weight = 10; description = 'Synthetic boundaries are documented.' }
         ) } | ConvertTo-Json -Depth 8 | Set-Content $domainRubric
-    & $scriptPath -RunDirectory $comparisonRoot -Model fixture-advanced -RubricFile (Join-Path $PSScriptRoot '../profiles/result-quality.json') `
+    & $scriptPath -RunDirectory $comparisonRoot -Model fixture-advanced -RubricFile (Join-Path $PSScriptRoot '..\profiles\rubrics\result-quality.json') `
         -DomainRubricFile $domainRubric -EvaluationDirectory $evaluationDirectory -CliPath $fakeCli
     Assert ($LASTEXITCODE -eq 0) 'Evaluation CLI completed successfully.'
     $results = Get-Content (Join-Path $evaluationDirectory 'evaluation.json') -Raw | ConvertFrom-Json -AsHashtable
@@ -101,7 +101,7 @@ try {
     }
     $replayOutput = Join-Path $fixture 'replayed-evaluation'
     'Changed after evaluation; must not enter replay.' | Set-Content (Join-Path $runs[0].runDirectory 'summary.md')
-    & $scriptPath -RunDirectory $comparisonRoot -Model fixture-advanced -RubricFile (Join-Path $PSScriptRoot '../profiles/result-quality.json') `
+    & $scriptPath -RunDirectory $comparisonRoot -Model fixture-advanced -RubricFile (Join-Path $PSScriptRoot '..\profiles\rubrics\result-quality.json') `
         -DomainRubricFile $domainRubric -EvaluationDirectory $replayOutput -ReplayCaptureRoot $evaluationDirectory -CliPath $fakeCli
     $replayedResults = Get-Content (Join-Path $replayOutput 'evaluation.json') -Raw | ConvertFrom-Json -AsHashtable
     Assert (@($replayedResults.results | Where-Object status -ne 'completed').Count -eq 0 -and
@@ -109,7 +109,7 @@ try {
         -not (Test-Path (Join-Path $replayOutput 'condition-auto/capture'))) 'Saved evaluator captures can be revalidated offline without a second model call.'
     Assert (-not (Get-Content (Join-Path $replayOutput 'condition-auto/evaluation-input.txt') -Raw).Contains('Changed after evaluation')) 'Replay uses frozen evidence, not edited sources.'
     'Summary evidence for evaluator.' | Set-Content (Join-Path $runs[0].runDirectory 'summary.md')
-    $changedRubric = Get-Content (Join-Path $PSScriptRoot '../profiles/result-quality.json') -Raw | ConvertFrom-Json -AsHashtable
+    $changedRubric = Get-Content (Join-Path $PSScriptRoot '..\profiles\rubrics\result-quality.json') -Raw | ConvertFrom-Json -AsHashtable
     $changedRubric.version = 'changed-for-test'
     $changedPath = Join-Path $fixture 'changed-rubric.json'
     $changedRubric | ConvertTo-Json -Depth 10 | Set-Content $changedPath
@@ -153,11 +153,61 @@ try {
     Assert ($invalid.status -eq 'partial_evidence' -and
         $invalid.score.evidenceCoveragePercent -eq 0 -and $null -eq $invalid.score.overallScore -and
         $invalid.score.citationWarnings.Count -gt 0) 'Unverifiable evidence is excluded, warned, and left unscored.'
+    $responseCases = @(
+        @{ model = 'fixture-split'; mode = 'concatenated_suffix'; messages = 3; status = 'completed' },
+        @{ model = 'fixture-prefaced-split'; mode = 'concatenated_suffix'; messages = 3; status = 'completed' },
+        @{ model = 'fixture-restarted'; mode = 'final_message'; messages = 1; status = 'completed' },
+        @{ model = 'fixture-fenced-split'; mode = 'concatenated_suffix'; messages = 2; status = 'completed' },
+        @{ model = 'fixture-split-invalid-evidence'; mode = 'concatenated_suffix'; messages = 3; status = 'partial_evidence' },
+        @{ model = 'fixture-truncated'; status = 'failed' },
+        @{ model = 'fixture-trailing-text'; status = 'failed' },
+        @{ model = 'fixture-tool-boundary'; status = 'failed' },
+        @{ model = 'fixture-invalid-schema'; status = 'failed' },
+        @{ model = 'fixture-json-array'; status = 'failed' }
+    )
+    foreach ($responseCase in $responseCases) {
+        $responseOutput = Join-Path $fixture $responseCase.model
+        & $scriptPath -RunDirectory $runs[0].runDirectory -Model $responseCase.model `
+            -EvaluationDirectory $responseOutput -CliPath $fakeCli
+        $caseOutput = Join-Path $responseOutput 'condition-auto'
+        $responseResult = Get-Content (Join-Path $caseOutput 'evaluation.json') -Raw | ConvertFrom-Json -AsHashtable
+        Assert ($responseResult.status -eq $responseCase.status) "$($responseCase.model) preserves response validity and evidence status."
+        if ($responseCase.status -eq 'failed') {
+            $failureIndex = Get-Content (Join-Path $responseOutput 'evaluation.json') -Raw | ConvertFrom-Json -AsHashtable
+            $failureSummary = Get-Content (Join-Path $responseOutput 'summary.md') -Raw
+            Assert ($responseResult.originalOutcome -eq 'completed_with_pending' -and
+                $responseResult.targetRequestedModel -eq 'condition-auto' -and
+                $responseResult.executionMetrics.totalWallClockMs -eq 13000 -and
+                $responseResult.targetAiCredits -eq '1.25' -and
+                $failureIndex.results[0].targetRequestedModel -eq 'condition-auto' -and
+                $failureSummary.Contains('00:00:13.000') -and $failureSummary.Contains('[诊断]') -and
+                -not $responseResult.Contains('score') -and $responseResult.error) 'Invalid responses remain failed with known run facts and diagnostic links, not stale scores.'
+            continue
+        }
+        Assert ($responseResult.responseAssembly.mode -eq $responseCase.mode -and
+            $responseResult.responseAssembly.messageCount -eq $responseCase.messages -and
+            $responseResult.responseAssembly.eventIds.Count -eq $responseCase.messages) 'Response assembly records the selected contiguous suffix.'
+        $decoded = $responseResult.rawResponse.Trim() -replace '^```json\s*|\s*```$', '' | ConvertFrom-Json -AsHashtable
+        Assert ($decoded.summary -ceq 'Fixture evaluation completed with "quotes", \paths and {braces}.') 'Fragment assembly preserves quoted strings, escape sequences and braces without inserting whitespace.'
+        if ($responseCase.status -eq 'partial_evidence') {
+            Assert ($null -eq $responseResult.score.overallScore -and
+                $responseResult.score.citationWarnings.Count -gt 0) 'Split responses still undergo strict citation validation.'
+        }
+        if ($responseCase.model -eq 'fixture-split') {
+            $splitReplayOutput = Join-Path $fixture 'split-replay'
+            & $scriptPath -RunDirectory $runs[0].runDirectory -Model $responseCase.model `
+                -EvaluationDirectory $splitReplayOutput -ReplayCaptureRoot $responseOutput -CliPath 'must-not-run'
+            $splitReplay = Get-Content (Join-Path $splitReplayOutput 'condition-auto/evaluation.json') -Raw | ConvertFrom-Json -AsHashtable
+            Assert ($splitReplay.status -eq 'completed' -and $splitReplay.replayedResponse -and
+                $splitReplay.rawResponse -ceq $responseResult.rawResponse -and
+                $splitReplay.responseAssembly.messageCount -eq 3) 'Split captures replay offline with identical response text.'
+        }
+    }
     $original = Get-Content (Join-Path $runs[0].runDirectory 'result.json') -Raw
     Assert ($original.Contains('completed_with_pending')) 'Evaluation does not mutate the original completed-with-pending outcome.'
     $unverifiedOriginal = Get-Content (Join-Path $runs[1].runDirectory 'result.json') -Raw
     Assert ($unverifiedOriginal.Contains('stage_completed')) 'Evaluation does not rewrite the unverified-delivery run outcome.'
-    Write-Output 'PASS: isolated rubric-based evaluation, source evidence, artifact input, weighted score, and multi-condition summary'
+    Write-Output 'PASS: rubric evaluation, strict segmented responses, frozen replay, evidence validation, and failure diagnostics'
 } finally {
     Set-Location $originalLocation
     if (Test-Path $fixture) { Remove-Item $fixture -Recurse -Force }
